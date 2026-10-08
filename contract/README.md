@@ -114,8 +114,7 @@ on behalf of users within a session allowance.
 | token-wrapper | `approved` | (owner, spender, amount, expiry) |
 | token-wrapper | `transfer_from` | (spender, from, to, amount) |
 
-## Related Repos
+## Related Packages
 
-- [`Orbit-Wal/Globe-Wallet`](https://github.com/Orbit-Wal/Globe-Wallet) — Web frontend
-- [`Orbit-Wal/mobile`](https://github.com/Orbit-Wal/mobile) — React Native app
-- [`Orbit-Wal/backend`](https://github.com/Orbit-Wal/backend) — REST API
+- [`backend/`](../backend/) — REST API (in this monorepo)
+- Web frontend and mobile app — not yet built; see the [root README](../README.md)

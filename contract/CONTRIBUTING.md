@@ -76,7 +76,7 @@ you've probably solved a symptom, not the issue.
 
 ## Documentation Conventions
 
-When referencing design documents, threat models, or other extensive documentation that lives in a different repository (such as the `Orbit-Wal/mobile` repo), do not use bare relative paths. Instead, use a stable, full URL to the exact document in that repository. This ensures the document remains accessible to auditors and maintainers reviewing this repository in isolation. If a document describes critical security invariants (e.g., recovery design rationale), summarize those invariants in the code comments and provide the full URL to the authoritative source document. We chose not to mirror documents like `RECOVERY.md` here to avoid duplicated state, but require full URLs to guarantee discoverability.
+When referencing design documents, threat models, or other extensive documentation that lives in a different repository (such as a future frontend or mobile repo), do not use bare relative paths. Instead, use a stable, full URL to the exact document in that repository. This ensures the document remains accessible to auditors and maintainers reviewing this repository in isolation. If a document describes critical security invariants (e.g., recovery design rationale), summarize those invariants in the code comments and provide the full URL to the authoritative source document. We chose not to mirror documents like `RECOVERY.md` here to avoid duplicated state, but require full URLs to guarantee discoverability.
 
 ## Before you open the PR
 

@@ -111,8 +111,7 @@ tests/             # Jest unit/integration tests
 docs/              # Design docs (e.g. concurrency.md)
 ```
 
-## Related Repos
+## Related Packages
 
-- [`Orbit-Wal/Globe-Wallet`](https://github.com/Orbit-Wal/Globe-Wallet) — Web frontend
-- [`Orbit-Wal/mobile`](https://github.com/Orbit-Wal/mobile) — React Native app
-- [`Orbit-Wal/contract`](https://github.com/Orbit-Wal/contract) — Soroban smart contracts
+- [`contract/`](../contract/) — Soroban smart contracts (in this monorepo)
+- Web frontend and mobile app — not yet built; see the [root README](../README.md)
