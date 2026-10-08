@@ -1,0 +1,8 @@
+# Shared
+.DS_Store
+*.log
+.env
+.env.local
+.env.production
+
+# Per-package rules live in backend/.gitignore and contract/.gitignore

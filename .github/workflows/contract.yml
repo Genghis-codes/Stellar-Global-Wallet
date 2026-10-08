@@ -1,8 +1,14 @@
-name: CI
+name: Contract CI
 
 on:
   push:
+    paths:
+      - "contract/**"
+      - ".github/workflows/contract.yml"
   pull_request:
+    paths:
+      - "contract/**"
+      - ".github/workflows/contract.yml"
 
 permissions:
   contents: read
@@ -10,6 +16,9 @@ permissions:
 jobs:
   check-and-test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contract
 
     steps:
       - name: Check out repository

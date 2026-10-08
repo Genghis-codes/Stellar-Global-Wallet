@@ -5,10 +5,10 @@ The bar for a merged PR here is deliberately high. Read this fully before openin
 
 ## Opening an issue
 
-Use the structured issue templates in [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/):
+Use the structured issue templates in [`.github/ISSUE_TEMPLATE/`](../.github/ISSUE_TEMPLATE/):
 
-- **[Bug report](.github/ISSUE_TEMPLATE/bug_report.yml)** — for defects in a contract, test, or build artifact.
-- **[Feature request](.github/ISSUE_TEMPLATE/feature_request.yml)** — for new capabilities, design decisions, or improvements.
+- **[Bug report](../.github/ISSUE_TEMPLATE/bug_report.yml)** — for defects in a contract, test, or build artifact.
+- **[Feature request](../.github/ISSUE_TEMPLATE/feature_request.yml)** — for new capabilities, design decisions, or improvements.
 
 Both templates encode the sections described in this document (Context, Problem, Impact,
 Suggested fix, Definition of done). Fill every required field — issues with empty or
@@ -76,7 +76,7 @@ you've probably solved a symptom, not the issue.
 
 ## Documentation Conventions
 
-When referencing design documents, threat models, or other extensive documentation that lives in a different repository (such as the `Orbit-Wal/mobile` repo), do not use bare relative paths. Instead, use a stable, full URL to the exact document in that repository. This ensures the document remains accessible to auditors and maintainers reviewing this repository in isolation. If a document describes critical security invariants (e.g., recovery design rationale), summarize those invariants in the code comments and provide the full URL to the authoritative source document. We chose not to mirror documents like `RECOVERY.md` here to avoid duplicated state, but require full URLs to guarantee discoverability.
+When referencing design documents, threat models, or other extensive documentation that lives in a different repository (such as a future frontend or mobile repo), do not use bare relative paths. Instead, use a stable, full URL to the exact document in that repository. This ensures the document remains accessible to auditors and maintainers reviewing this repository in isolation. If a document describes critical security invariants (e.g., recovery design rationale), summarize those invariants in the code comments and provide the full URL to the authoritative source document. We chose not to mirror documents like `RECOVERY.md` here to avoid duplicated state, but require full URLs to guarantee discoverability.
 
 ## Before you open the PR
 
