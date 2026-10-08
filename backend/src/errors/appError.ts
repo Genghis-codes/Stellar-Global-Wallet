@@ -1,0 +1,80 @@
+export interface ValidationIssue {
+  location?: string;
+  message: string;
+  path?: string;
+  type?: string;
+  value?: unknown;
+}
+
+export interface AppErrorOptions {
+  code: string;
+  details?: unknown;
+  retryable?: boolean;
+  status: number;
+}
+
+export class AppError extends Error {
+  readonly code: string;
+  readonly details?: unknown;
+  readonly retryable?: boolean;
+  readonly status: number;
+
+  constructor(message: string, options: AppErrorOptions) {
+    super(message);
+    this.name = new.target.name;
+    this.code = options.code;
+    this.details = options.details;
+    this.retryable = options.retryable;
+    this.status = options.status;
+  }
+}
+
+export class InternalServerError extends AppError {
+  constructor(message = "Internal server error") {
+    super(message, { code: "INTERNAL_ERROR", status: 500 });
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(message = "Not found", code = "NOT_FOUND", details?: unknown) {
+    super(message, { code, details, status: 404 });
+  }
+}
+
+export class UnauthorizedError extends AppError {
+  constructor(message = "Unauthorized", code = "UNAUTHORIZED", details?: unknown) {
+    super(message, { code, details, status: 401 });
+  }
+}
+
+export class ValidationError extends AppError {
+  readonly details: ValidationIssue[];
+
+  constructor(issues: ValidationIssue[], message = "Request validation failed") {
+    super(message, { code: "VALIDATION_ERROR", details: issues, status: 400 });
+    this.details = issues;
+  }
+}
+
+export class HorizonError extends AppError {
+  constructor(
+    message: string,
+    options: {
+      code: string;
+      details?: unknown;
+      retryable?: boolean;
+      status?: number;
+    }
+  ) {
+    super(message, {
+      code: options.code,
+      details: options.details,
+      retryable: options.retryable,
+      status: options.status ?? 502,
+    });
+  }
+}
+
+export function isAppError(error: unknown): error is AppError {
+  return error instanceof AppError;
+}
