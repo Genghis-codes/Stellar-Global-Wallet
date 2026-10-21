@@ -18,6 +18,7 @@ export const ERROR_CODES = [
   // Accounts
   "ACCOUNT_NOT_FOUND",
   "ACCOUNT_NOT_FUNDED",
+  "SOURCE_ACCOUNT_NOT_FOUND",
   "INSUFFICIENT_BALANCE",
   "INSUFFICIENT_RESERVE",
   "ASSET_ISSUER_NOT_FOUND",
@@ -32,6 +33,10 @@ export const ERROR_CODES = [
   "INVALID_TRANSACTION",
   "INSUFFICIENT_FEE",
   "TIMEOUT",
+  "TX_EXPIRED",
+  "TX_ALREADY_SUBMITTED",
+  "PATH_EXPIRED",
+  "DESTINATION_NO_TRUSTLINE",
 
   // Horizon result codes (mapped to a fixed set)
   "HORIZON_ERROR",
@@ -53,6 +58,8 @@ export const ERROR_CODES = [
   "CONTRACT_ERROR",
   "CONTRACT_NOT_FOUND",
   "CONTRACT_INVOCATION_FAILED",
+  "SOROBAN_UNAVAILABLE",
+  "SOROBAN_REBUILD_REQUIRED",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

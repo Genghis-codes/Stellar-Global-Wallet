@@ -5,10 +5,26 @@ import { validatePathAssets } from "../validation/stellarAsset";
 import { AccountLock, InProcessAccountLock } from "./locks/accountLock";
 import {
   DestinationNotFundedError,
+  DestinationTrustlineError,
   MemoRequiredError,
   NonRetryableHorizonError,
+  PathExpiredError,
   SequenceConflictError,
+  SourceAccountNotFoundError,
+  TransactionAlreadySubmittedError,
+  TransactionExpiredError,
 } from "./stellarErrors";
+import {
+  assertNotExpired,
+  baseAccountId,
+  BUILD_TIMEOUT_SECONDS,
+  describeUnsignedTransaction,
+  ParsedSignedTransaction,
+  parseSignedTransaction,
+  SubmitSignedPending,
+  SubmitSignedResult,
+  UnsignedTransactionInfo,
+} from "./transactionEnvelope";
 import type { TransactionSummary } from "@stellar-global-wallet/types";
 import { fromStroops, toStroops } from "../utils/stroops";
 import { isGAddress } from "../utils/stellarAddress";
@@ -58,6 +74,19 @@ const BASE_RESERVE = "0.5";
 /** Which operation the send/build path chose for a destination (#65). */
 export type SendOperationType = "payment" | "createAccount";
 
+/** Unsigned path payment plus what the swap screen shows before the user signs. */
+export interface PathPaymentBuild extends UnsignedTransactionInfo {
+  /** Amounts in the send / receive asset, as 7-decimal strings. */
+  expectedSend: string;
+  expectedReceive: string;
+  /** Strict-send only: the least the destination will receive (`destMin`). */
+  minReceive?: string;
+  /** Strict-receive only: the most the source will spend (`sendMax`). */
+  maxSend?: string;
+  slippageBps: number;
+  path: string[];
+}
+
 /** One pre-signing warning returned by `precheckSend` (#64). */
 export interface SendPrecheckWarning {
   code:
@@ -95,6 +124,9 @@ const MAX_SEQ_RETRIES = 3;
 
 /** How many ms to pause between retries (exponential back-off seed). */
 const RETRY_BASE_DELAY_MS = 200;
+
+/** Path payment result codes that mean "the quote no longer holds" rather than a deterministic failure. */
+const PATH_EXPIRED_OPERATION_CODES = ["op_too_few_offers", "op_under_dest_min", "op_over_source_max"];
 
 export class StellarService {
   private server: StellarSdk.Horizon.Server;
@@ -592,13 +624,11 @@ export class StellarService {
     // building the transaction. This prevents accidental fund loss when
     // sending to custodial/exchange accounts that rely on the memo to
     // credit the deposit.
-    const requiresMemo = await this.destinationRequiresMemo(destinationPublicKey);
-    if (requiresMemo && !memo) {
-      throw new MemoRequiredError(
-        `The destination account ${destinationPublicKey} requires a memo for transactions. ` +
-          "Please provide a memo to avoid losing funds. (SEP-29)"
-      );
-    }
+    assertMemoProvided(
+      destinationPublicKey,
+      await this.destinationRequiresMemo(destinationPublicKey),
+      memo
+    );
 
     // #65 — an unfunded destination needs createAccount, not payment.
     const { operation } = await this.resolveSendOperation(destinationPublicKey, asset, amount);
@@ -689,6 +719,296 @@ export class StellarService {
         startingBalance: amount,
       }),
     };
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Issue #1 – Unsigned payment XDR for client-side signing
+  // ---------------------------------------------------------------------------
+  // Non-custodial counterpart to `sendPayment`: runs the same destination
+  // checks (SEP-29 memo, createAccount for unfunded destinations) but only
+  // returns the unsigned envelope. Nothing is submitted, so no lock is taken
+  // and no sequence number is reserved — two builds in a row return the same
+  // sequence; whichever is signed and submitted first wins.
+  // ---------------------------------------------------------------------------
+
+  async buildPayment(params: {
+    sourcePublicKey: string;
+    destinationPublicKey: string;
+    amount: string;
+    asset?: string;
+    memo?: string;
+  }): Promise<UnsignedTransactionInfo & { operationType: SendOperationType }> {
+    const { sourcePublicKey, destinationPublicKey, amount, asset, memo } = params;
+    const sourceAccount = await this.loadSourceAccount(sourcePublicKey);
+
+    // Lookups run against the underlying G... account when the destination
+    // is muxed; only the payment operation carries the M... address.
+    const baseDestination = baseAccountId(destinationPublicKey);
+    assertMemoProvided(baseDestination, await this.destinationRequiresMemo(baseDestination), memo);
+
+    const resolved = await this.resolveSendOperation(baseDestination, asset, amount);
+    const operation =
+      resolved.operationType === "payment" && baseDestination !== destinationPublicKey
+        ? StellarSdk.Operation.payment({
+            destination: destinationPublicKey,
+            asset: parseAsset(asset),
+            amount,
+          })
+        : resolved.operation;
+
+    const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: await this.currentBaseFee(),
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(operation)
+      .setTimeout(BUILD_TIMEOUT_SECONDS);
+    if (memo) builder.addMemo(StellarSdk.Memo.text(memo));
+
+    return {
+      ...describeUnsignedTransaction(builder.build(), this.networkPassphrase),
+      operationType: resolved.operationType,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Issue #2 – Submit a client-signed envelope
+  // ---------------------------------------------------------------------------
+  // The client signed a specific sequence number, so unlike `sendPayment` this
+  // never re-signs or retries with a fresh sequence: a failure is reported and
+  // the client rebuilds. Plain and fee-bump envelopes are both accepted.
+  // ---------------------------------------------------------------------------
+
+  /** Parses and sanity-checks a signed envelope (see `parseSignedTransaction`) against this network. */
+  parseSignedTransaction(signedXdr: string): ParsedSignedTransaction {
+    return parseSignedTransaction(signedXdr, this.networkPassphrase);
+  }
+
+  async submitSigned(params: { signedXdr: string }): Promise<SubmitSignedResult | SubmitSignedPending> {
+    const parsed = this.parseSignedTransaction(params.signedXdr);
+    assertNotExpired(parsed.transaction);
+
+    try {
+      const response = await this.server.submitTransaction(parsed.transaction);
+      return { hash: response.hash, ledger: response.ledger, successful: response.successful };
+    } catch (err) {
+      // A gateway timeout says nothing about whether the transaction landed.
+      if (hasResponseStatus(err, 504)) return { hash: parsed.hash, status: "pending" };
+      throw await this.translateSignedSubmissionError(err, parsed);
+    }
+  }
+
+  private async translateSignedSubmissionError(err: unknown, parsed: ParsedSignedTransaction): Promise<unknown> {
+    const resultCodes = (
+      err as { response?: { extras?: { result_codes?: { transaction?: string; operations?: string[] } } } } | undefined
+    )?.response?.extras?.result_codes;
+    const txCode = resultCodes?.transaction;
+
+    // The SDK runs its own SEP-29 check before sending; surface it as the same
+    // error /send and the build routes use instead of a 500.
+    if (err instanceof StellarSdk.AccountRequiresMemoError) {
+      return new MemoRequiredError(
+        `The destination account ${err.accountId} requires a memo for transactions. ` +
+          "Build the transaction again with a memo to avoid losing funds. (SEP-29)"
+      );
+    }
+    if (err instanceof StellarSdk.BadResponseError) {
+      if (resultCodes?.operations?.some((code) => PATH_EXPIRED_OPERATION_CODES.includes(code))) {
+        return new PathExpiredError(resultCodes);
+      }
+      if (txCode === "tx_too_late") {
+        return new TransactionExpiredError("The transaction expired before it reached the network. Build a new one and sign it again.");
+      }
+      // Re-sending an envelope that already landed fails with tx_bad_seq; if
+      // the hash is on the ledger it's a duplicate, not a stale sequence.
+      if (txCode === "tx_bad_seq" && (await this.transactionExists(parsed.hash))) {
+        return new TransactionAlreadySubmittedError(parsed.hash);
+      }
+    }
+    return translateSubmissionError(err, parsed.sourcePublicKey);
+  }
+
+  private async transactionExists(hash: string): Promise<boolean> {
+    try {
+      await this.server.transactions().transaction(hash).call();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Issue #3 – Unsigned path payments with server-side slippage
+  // ---------------------------------------------------------------------------
+  // The client passes the route it picked from /paths/* and the quoted amount;
+  // `destMin` / `sendMax` are derived here from a basis-point tolerance in
+  // integer stroops, so no client does the (fund-losing) rounding itself.
+  // ---------------------------------------------------------------------------
+
+  async buildPathPaymentStrictSend(params: {
+    sourcePublicKey: string;
+    destinationPublicKey: string;
+    sendAsset?: string;
+    sendAmount: string;
+    destAsset: string;
+    /** What /paths/strict-send quoted the destination would receive for `sendAmount`. */
+    quotedDestAmount: string;
+    path?: string[];
+    slippageBps?: number;
+    memo?: string;
+  }): Promise<PathPaymentBuild> {
+    const { sourcePublicKey, destinationPublicKey, sendAsset, sendAmount, destAsset, quotedDestAmount, path, memo } =
+      params;
+    const slippageBps = params.slippageBps ?? DEFAULT_SLIPPAGE_BPS;
+    const destMin = minReceiveAfterSlippage(quotedDestAmount, slippageBps);
+
+    const operation = StellarSdk.Operation.pathPaymentStrictSend({
+      sendAsset: parseAsset(sendAsset),
+      sendAmount,
+      destination: destinationPublicKey,
+      destAsset: parseAsset(destAsset),
+      destMin,
+      path: parsePathAssets(path),
+    });
+    const unsigned = await this.buildPathPaymentTransaction({
+      sourcePublicKey,
+      destinationPublicKey,
+      destAsset,
+      memo,
+      operation,
+    });
+
+    return {
+      ...unsigned,
+      expectedSend: fromStroops(toStroops(sendAmount)),
+      expectedReceive: fromStroops(toStroops(quotedDestAmount)),
+      minReceive: destMin,
+      slippageBps,
+      path: path ?? [],
+    };
+  }
+
+  async buildPathPaymentStrictReceive(params: {
+    sourcePublicKey: string;
+    destinationPublicKey: string;
+    sendAsset?: string;
+    /** What /paths/strict-receive quoted the source would have to send for `destAmount`. */
+    quotedSendAmount: string;
+    destAsset: string;
+    destAmount: string;
+    path?: string[];
+    slippageBps?: number;
+    memo?: string;
+  }): Promise<PathPaymentBuild> {
+    const { sourcePublicKey, destinationPublicKey, sendAsset, quotedSendAmount, destAsset, destAmount, path, memo } =
+      params;
+    const slippageBps = params.slippageBps ?? DEFAULT_SLIPPAGE_BPS;
+    const sendMax = maxSendAfterSlippage(quotedSendAmount, slippageBps);
+
+    const operation = StellarSdk.Operation.pathPaymentStrictReceive({
+      sendAsset: parseAsset(sendAsset),
+      sendMax,
+      destination: destinationPublicKey,
+      destAsset: parseAsset(destAsset),
+      destAmount,
+      path: parsePathAssets(path),
+    });
+    const unsigned = await this.buildPathPaymentTransaction({
+      sourcePublicKey,
+      destinationPublicKey,
+      destAsset,
+      memo,
+      operation,
+    });
+
+    return {
+      ...unsigned,
+      expectedSend: fromStroops(toStroops(quotedSendAmount)),
+      expectedReceive: fromStroops(toStroops(destAmount)),
+      maxSend: sendMax,
+      slippageBps,
+      path: path ?? [],
+    };
+  }
+
+  private async buildPathPaymentTransaction(params: {
+    sourcePublicKey: string;
+    destinationPublicKey: string;
+    destAsset: string;
+    memo?: string;
+    operation: StellarSdk.xdr.Operation;
+  }): Promise<UnsignedTransactionInfo> {
+    const { sourcePublicKey, destinationPublicKey, destAsset, memo, operation } = params;
+    const sourceAccount = await this.loadSourceAccount(sourcePublicKey);
+    await this.assertDestinationCanReceive(destinationPublicKey, destAsset, memo);
+
+    const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: await this.currentBaseFee(),
+      networkPassphrase: this.networkPassphrase,
+    })
+      .addOperation(operation)
+      .setTimeout(BUILD_TIMEOUT_SECONDS);
+    if (memo) builder.addMemo(StellarSdk.Memo.text(memo));
+    return describeUnsignedTransaction(builder.build(), this.networkPassphrase);
+  }
+
+  /**
+   * Pre-signing check for path payments: they fail on-chain (after the fee is
+   * charged) if the destination is missing, can't hold the asset, or needs a
+   * memo. Same rules as `precheckSend`, but fatal here.
+   */
+  private async assertDestinationCanReceive(
+    destinationPublicKey: string,
+    destAsset: string,
+    memo: string | undefined
+  ): Promise<void> {
+    const baseDestination = baseAccountId(destinationPublicKey);
+    const asset = parseAsset(destAsset);
+    const destination = await this.loadAccountOrNull(baseDestination);
+
+    if (!destination) {
+      throw new DestinationNotFundedError(
+        `Destination account ${baseDestination} does not exist, and a path payment cannot create it. ` +
+          "Fund it first with a plain XLM payment.",
+        {
+          reason: "PATH_PAYMENT_CANNOT_CREATE",
+          destination: baseDestination,
+          minimumStartingBalance: MIN_STARTING_BALANCE,
+        }
+      );
+    }
+    assertMemoProvided(baseDestination, accountRequiresMemo(destination), memo);
+
+    if (asset.isNative() || asset.getIssuer() === baseDestination) return;
+    const label = asset.getCode();
+    const trustline = findTrustline(destination, asset);
+    if (!trustline) {
+      throw new DestinationTrustlineError(
+        `Destination account ${baseDestination} does not trust ${label} and cannot receive it.`,
+        { reason: "NO_TRUSTLINE", destination: baseDestination, asset: destAsset }
+      );
+    }
+    if (trustline.is_authorized === false) {
+      throw new DestinationTrustlineError(
+        `Destination's ${label} trustline is not authorized by the issuer.`,
+        { reason: "TRUSTLINE_NOT_AUTHORIZED", destination: baseDestination, asset: destAsset }
+      );
+    }
+  }
+
+  /** Loads the source account for a build, or throws SOURCE_ACCOUNT_NOT_FOUND if it isn't funded. */
+  private async loadSourceAccount(sourcePublicKey: string): Promise<StellarSdk.Account> {
+    const account = await this.loadAccountOrNull(sourcePublicKey);
+    if (!account) throw new SourceAccountNotFoundError(sourcePublicKey);
+    return new StellarSdk.Account(account.accountId(), account.sequenceNumber());
+  }
+
+  /** Current per-operation fee from Horizon, falling back to the protocol minimum if unreachable. */
+  private async currentBaseFee(): Promise<string> {
+    try {
+      return String(await this.server.fetchBaseFee());
+    } catch {
+      return StellarSdk.BASE_FEE;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1168,9 +1488,19 @@ export class StellarService {
 // ---------------------------------------------------------------------------
 
 function parseAsset(assetStr: string | undefined): StellarSdk.Asset {
-  if (!assetStr || assetStr === "XLM") return StellarSdk.Asset.native();
+  if (!assetStr || assetStr === "XLM" || assetStr === "native") return StellarSdk.Asset.native();
   const [code, issuer] = assetStr.split(":");
   return new StellarSdk.Asset(code, issuer);
+}
+
+/** SEP-29: refuse to build or send to a memo-required destination without a memo. */
+function assertMemoProvided(destinationPublicKey: string, requiresMemo: boolean, memo: string | undefined): void {
+  if (requiresMemo && !memo) {
+    throw new MemoRequiredError(
+      `The destination account ${destinationPublicKey} requires a memo for transactions. ` +
+        "Please provide a memo to avoid losing funds. (SEP-29)"
+    );
+  }
 }
 
 /** SEP-29: `config.memo_required` data entry set to "1" (base64 "MQ=="). */

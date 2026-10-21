@@ -15,6 +15,7 @@ import {
 } from "@globe-wallet/sdk";
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { getCachedResult, cacheResult } from "../services/idempotency";
+import { createClientSigningRouter } from "./clientSigning";
 
 const SEP7_PAY_PREFIX = "web+stellar:pay?";
 
