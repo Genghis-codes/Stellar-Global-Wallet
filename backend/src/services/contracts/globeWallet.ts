@@ -1,7 +1,7 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { config } from "../../config";
 import { AppError } from "../../errors/appError";
-import { SorobanService, ContractCallResult } from "../soroban";
+import { SorobanService, ContractCallResult, PreparedInvocation } from "../soroban";
 import { SorobanNotConfiguredError, SorobanSimulationError, SorobanTransactionError } from "../sorobanErrors";
 import { describeGlobeWalletError } from "./globeWalletErrors";
 import type {
@@ -147,6 +147,21 @@ function withContractErrorCodes<T>(promise: Promise<T>): Promise<T> {
  */
 export class GlobeWalletContract {
   constructor(private readonly soroban: SorobanService) {}
+
+  private prepareWalletInvocation(params: {
+    method: string;
+    sourcePublicKey: string;
+    args: StellarSdk.xdr.ScVal[];
+  }): Promise<PreparedInvocation> {
+    return withWalletErrorTranslation(
+      withContractErrorCodes(
+        this.soroban.prepareInvocation({
+          contractId: requireContractId(),
+          ...params,
+        })
+      )
+    );
+  }
 
   /** Builds unsigned XDR for registering a wallet asset (#8). */
   async buildAddAssetTx(params: {
@@ -324,6 +339,103 @@ export class GlobeWalletContract {
     return Promise.all(assets.map((asset) => this.getSpendAllowance(userPublicKey, asset.code)));
   }
 
+  /** Builds unsigned XDR to register a guardian (#5). */
+  buildAddGuardianTx(params: { admin: string; guardian: string }): Promise<PreparedInvocation> {
+    const { admin, guardian } = params;
+    return this.prepareWalletInvocation({
+      method: "add_guardian",
+      sourcePublicKey: admin,
+      args: [
+        StellarSdk.nativeToScVal(admin, { type: "address" }),
+        StellarSdk.nativeToScVal(guardian, { type: "address" }),
+      ],
+    });
+  }
+
+  /** Builds unsigned XDR to remove a guardian (#5). */
+  buildRemoveGuardianTx(params: { admin: string; guardian: string }): Promise<PreparedInvocation> {
+    const { admin, guardian } = params;
+    return this.prepareWalletInvocation({
+      method: "remove_guardian",
+      sourcePublicKey: admin,
+      args: [
+        StellarSdk.nativeToScVal(admin, { type: "address" }),
+        StellarSdk.nativeToScVal(guardian, { type: "address" }),
+      ],
+    });
+  }
+
+  /** Builds unsigned XDR to initiate social recovery (#6). */
+  buildInitiateRecoveryTx(params: { guardian: string; newAdmin: string }): Promise<PreparedInvocation> {
+    const { guardian, newAdmin } = params;
+    return this.prepareWalletInvocation({
+      method: "initiate_recovery",
+      sourcePublicKey: guardian,
+      args: [
+        StellarSdk.nativeToScVal(guardian, { type: "address" }),
+        StellarSdk.nativeToScVal(newAdmin, { type: "address" }),
+      ],
+    });
+  }
+
+  /** Builds unsigned XDR for a guardian to approve recovery (#6). */
+  buildApproveRecoveryTx(params: { guardian: string }): Promise<PreparedInvocation> {
+    const { guardian } = params;
+    return this.prepareWalletInvocation({
+      method: "approve_recovery",
+      sourcePublicKey: guardian,
+      args: [StellarSdk.nativeToScVal(guardian, { type: "address" })],
+    });
+  }
+
+  /** Builds unsigned XDR for a guardian to revoke their recovery approval (#6). */
+  buildRevokeRecoveryApprovalTx(params: { guardian: string }): Promise<PreparedInvocation> {
+    const { guardian } = params;
+    return this.prepareWalletInvocation({
+      method: "revoke_recovery_approval",
+      sourcePublicKey: guardian,
+      args: [StellarSdk.nativeToScVal(guardian, { type: "address" })],
+    });
+  }
+
+  /** Builds unsigned XDR to execute recovery; execution is permissionless (#6). */
+  buildExecuteRecoveryTx(params: { sourcePublicKey: string }): Promise<PreparedInvocation> {
+    return this.prepareWalletInvocation({
+      method: "execute_recovery",
+      sourcePublicKey: params.sourcePublicKey,
+      args: [],
+    });
+  }
+
+  /** Builds unsigned XDR for the admin to cancel pending recovery (#6). */
+  buildCancelRecoveryTx(params: { admin: string }): Promise<PreparedInvocation> {
+    const { admin } = params;
+    return this.prepareWalletInvocation({
+      method: "cancel_recovery",
+      sourcePublicKey: admin,
+      args: [StellarSdk.nativeToScVal(admin, { type: "address" })],
+    });
+  }
+
+  /** Builds unsigned XDR to set an asset's daily spend limit (#7). */
+  buildSetSpendLimitTx(params: {
+    user: string;
+    assetCode: string;
+    /** Limit in stroops, as a non-negative integer string; zero means unlimited. */
+    limit: string;
+  }): Promise<PreparedInvocation> {
+    const { user, assetCode, limit } = params;
+    return this.prepareWalletInvocation({
+      method: "set_spend_limit",
+      sourcePublicKey: user,
+      args: [
+        StellarSdk.nativeToScVal(user, { type: "address" }),
+        StellarSdk.nativeToScVal(assetCode, { type: "string" }),
+        StellarSdk.nativeToScVal(BigInt(limit), { type: "i128" }),
+      ],
+    });
+  }
+
   /**
    * Records a spend against the caller's daily limit for `assetCode`,
    * rejecting (via simulation, before any fee is paid) if it would exceed
@@ -366,23 +478,17 @@ export class GlobeWalletContract {
     /** Amount in the asset's smallest unit (stroops), as an integer string. */
     amount: string;
   }): Promise<PreparedInvocation> {
-    const contractId = requireContractId();
     const { userPublicKey, assetCode, amount } = params;
-    return withWalletErrorTranslation(
-      withContractErrorCodes(
-        this.soroban.prepareInvocation({
-          contractId,
-          method: "record_spend",
-          sourcePublicKey: userPublicKey,
-          args: [
-            StellarSdk.nativeToScVal(userPublicKey, { type: "address" }),
-            StellarSdk.nativeToScVal(assetCode, { type: "string" }),
-            // BigInt, not Number: amounts past 2^53 stroops must survive exactly.
-            StellarSdk.nativeToScVal(BigInt(amount), { type: "i128" }),
-          ],
-        })
-      )
-    );
+    return this.prepareWalletInvocation({
+      method: "record_spend",
+      sourcePublicKey: userPublicKey,
+      args: [
+        StellarSdk.nativeToScVal(userPublicKey, { type: "address" }),
+        StellarSdk.nativeToScVal(assetCode, { type: "string" }),
+        // BigInt, not Number: amounts past 2^53 stroops must survive exactly.
+        StellarSdk.nativeToScVal(BigInt(amount), { type: "i128" }),
+      ],
+    });
   }
 
   /** Submits a transaction signed by the user (from {@link buildRecordSpend} or any other build) and waits for the result. */

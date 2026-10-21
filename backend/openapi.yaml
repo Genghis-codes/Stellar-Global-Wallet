@@ -439,6 +439,301 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  /contract/wallet/guardians/add/build:
+    post:
+      tags: [contract]
+      summary: Build unsigned XDR to add a guardian
+      operationId: buildAddGuardian
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [admin, guardian]
+              properties:
+                admin:
+                  $ref: '#/components/schemas/StellarAddress'
+                guardian:
+                  $ref: '#/components/schemas/StellarAddress'
+      responses:
+        '200':
+          description: Simulated unsigned Soroban transaction and authorization data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedInvocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Contract rejected the guardian addition (for example duplicate or maximum reached)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /contract/wallet/guardians/remove/build:
+    post:
+      tags: [contract]
+      summary: Build unsigned XDR to remove a guardian
+      operationId: buildRemoveGuardian
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [admin, guardian]
+              properties:
+                admin:
+                  $ref: '#/components/schemas/StellarAddress'
+                guardian:
+                  $ref: '#/components/schemas/StellarAddress'
+      responses:
+        '200':
+          description: Simulated unsigned Soroban transaction and authorization data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedInvocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Contract rejected the guardian removal (for example, because it would violate the recovery threshold)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /contract/wallet/recovery/initiate/build:
+    post:
+      tags: [contract]
+      summary: Build unsigned XDR to initiate social recovery
+      operationId: buildInitiateRecovery
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [guardian, newAdmin]
+              properties:
+                guardian:
+                  $ref: '#/components/schemas/StellarAddress'
+                newAdmin:
+                  $ref: '#/components/schemas/StellarAddress'
+      responses:
+        '200':
+          description: Simulated unsigned Soroban transaction and authorization data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedInvocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Contract rejected recovery initiation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /contract/wallet/recovery/approve/build:
+    post:
+      tags: [contract]
+      summary: Build unsigned XDR to approve social recovery
+      operationId: buildApproveRecovery
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [guardian]
+              properties:
+                guardian:
+                  $ref: '#/components/schemas/StellarAddress'
+      responses:
+        '200':
+          description: Simulated unsigned Soroban transaction and authorization data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedInvocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Contract rejected the recovery approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /contract/wallet/recovery/revoke-approval/build:
+    post:
+      tags: [contract]
+      summary: Build unsigned XDR to revoke a recovery approval
+      operationId: buildRevokeRecoveryApproval
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [guardian]
+              properties:
+                guardian:
+                  $ref: '#/components/schemas/StellarAddress'
+      responses:
+        '200':
+          description: Simulated unsigned Soroban transaction and authorization data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedInvocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Contract rejected revocation of the recovery approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /contract/wallet/recovery/execute/build:
+    post:
+      tags: [contract]
+      summary: Build unsigned XDR to execute social recovery
+      operationId: buildExecuteRecovery
+      description: Execution is permissionless; sourcePublicKey identifies the fee-paying transaction source.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [sourcePublicKey]
+              properties:
+                sourcePublicKey:
+                  $ref: '#/components/schemas/StellarAddress'
+      responses:
+        '200':
+          description: Simulated unsigned Soroban transaction and authorization data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedInvocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Contract rejected recovery execution (for example, quorum or timelock not satisfied)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /contract/wallet/recovery/cancel/build:
+    post:
+      tags: [contract]
+      summary: Build unsigned XDR to cancel social recovery
+      operationId: buildCancelRecovery
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [admin]
+              properties:
+                admin:
+                  $ref: '#/components/schemas/StellarAddress'
+      responses:
+        '200':
+          description: Simulated unsigned Soroban transaction and authorization data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedInvocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Contract rejected cancellation of recovery
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /contract/wallet/spend-limit/build:
+    post:
+      tags: [contract]
+      summary: Build unsigned XDR to set a daily spend limit
+      operationId: buildSetSpendLimit
+      description: limit is a decimal asset amount with up to 7 decimal places; zero clears the limit and means unlimited.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [user, assetCode, limit]
+              properties:
+                user:
+                  $ref: '#/components/schemas/StellarAddress'
+                assetCode:
+                  type: string
+                  pattern: '^[A-Za-z0-9]{1,12}$'
+                limit:
+                  type: string
+                  pattern: '^\d+(\.\d{1,7})?$'
+                  description: Decimal asset amount; zero means unlimited. Converted exactly to stroops and must fit a Soroban i128.
+      responses:
+        '200':
+          description: Simulated unsigned Soroban transaction and authorization data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreparedInvocation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Contract rejected the spend limit (for example, current-day spending exceeds the proposed limit)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /wallet/send:
     post:
       tags: [wallet]
@@ -772,6 +1067,42 @@ components:
       properties:
         xdr:
           type: string
+    PreparedInvocation:
+      type: object
+      required: [xdr, networkPassphrase, fee, sequence, timeBounds, expiresAt, minResourceFee, authEntries, latestLedger]
+      properties:
+        xdr:
+          type: string
+          description: Base64 XDR of the unsigned transaction envelope.
+        networkPassphrase:
+          type: string
+        fee:
+          type: string
+          description: Total inclusion fee in stroops.
+        sequence:
+          type: string
+        timeBounds:
+          type: object
+          required: [minTime, maxTime]
+          properties:
+            minTime:
+              type: string
+            maxTime:
+              type: string
+        expiresAt:
+          type: [string, 'null']
+          format: date-time
+        minResourceFee:
+          type: string
+          description: Soroban resource fee in stroops.
+        authEntries:
+          type: array
+          items:
+            type: string
+          description: Authorization entries in base64 XDR.
+        latestLedger:
+          type: integer
+          description: Ledger sequence used for simulation.
     DeprecationHeaders:
       type: object
       properties:

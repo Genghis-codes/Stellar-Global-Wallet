@@ -5,6 +5,7 @@ import { GlobeWalletContract } from "../services/contracts/globeWallet";
 import { jwtAuth } from "../middleware/jwtAuth";
 import { deprecated } from "../middleware/deprecated";
 import { isGAddress, publicKeyMessage } from "../utils/stellarAddress";
+import { toStroops } from "../utils/stroops";
 import { isValidAccountId } from "../validation/historyQuery";
 
 /** Largest value a Soroban i128 can hold. */
@@ -13,6 +14,14 @@ const I128_MAX = 2n ** 127n - 1n;
 /** Positive integer stroop amount that fits an i128 — checked as BigInt so it never loses precision. */
 function isValidSpendAmount(value: unknown): boolean {
   return typeof value === "string" && /^[1-9]\d*$/.test(value) && BigInt(value) <= I128_MAX;
+}
+
+/** Decimal asset amount; zero clears the limit and therefore means unlimited. */
+function isValidSpendLimit(value: unknown): boolean {
+  if (typeof value !== "string" || value.length > 40 || !/^\d+(?:\.\d{1,7})?$/.test(value)) {
+    return false;
+  }
+  return toStroops(value) <= I128_MAX;
 }
 
 export function createContractRouter(globeWallet: GlobeWalletContract): Router {
@@ -201,6 +210,132 @@ export function createContractRouter(globeWallet: GlobeWalletContract): Router {
           assetCode: req.body.assetCode,
         });
         res.json({ xdr });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // #5 — build unsigned transactions for guardian management.
+  contractRouter.post(
+    "/wallet/guardians/add/build",
+    rejectUnknownBodyFields(["admin", "guardian"]),
+    body("admin").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    body("guardian").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        res.json(await globeWallet.buildAddGuardianTx(req.body));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  contractRouter.post(
+    "/wallet/guardians/remove/build",
+    rejectUnknownBodyFields(["admin", "guardian"]),
+    body("admin").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    body("guardian").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        res.json(await globeWallet.buildRemoveGuardianTx(req.body));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // #6 — build unsigned transactions for the complete social-recovery lifecycle.
+  contractRouter.post(
+    "/wallet/recovery/initiate/build",
+    rejectUnknownBodyFields(["guardian", "newAdmin"]),
+    body("guardian").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    body("newAdmin").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        res.json(await globeWallet.buildInitiateRecoveryTx(req.body));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  contractRouter.post(
+    "/wallet/recovery/approve/build",
+    rejectUnknownBodyFields(["guardian"]),
+    body("guardian").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        res.json(await globeWallet.buildApproveRecoveryTx(req.body));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  contractRouter.post(
+    "/wallet/recovery/revoke-approval/build",
+    rejectUnknownBodyFields(["guardian"]),
+    body("guardian").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        res.json(await globeWallet.buildRevokeRecoveryApprovalTx(req.body));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  contractRouter.post(
+    "/wallet/recovery/execute/build",
+    rejectUnknownBodyFields(["sourcePublicKey"]),
+    body("sourcePublicKey").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        res.json(await globeWallet.buildExecuteRecoveryTx(req.body));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  contractRouter.post(
+    "/wallet/recovery/cancel/build",
+    rejectUnknownBodyFields(["admin"]),
+    body("admin").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        res.json(await globeWallet.buildCancelRecoveryTx(req.body));
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // #7 — `limit` is a decimal asset amount; zero means unlimited in the contract.
+  contractRouter.post(
+    "/wallet/spend-limit/build",
+    rejectUnknownBodyFields(["user", "assetCode", "limit"]),
+    body("user").isLength({ min: 56, max: 56 }).bail().custom(isGAddress).withMessage(publicKeyMessage),
+    body("assetCode")
+      .isString()
+      .matches(/^[A-Za-z0-9]{1,12}$/)
+      .withMessage("must be a 1-12 character alphanumeric asset code"),
+    body("limit")
+      .custom(isValidSpendLimit)
+      .withMessage("limit must be a non-negative decimal string with up to 7 decimal places that fits an i128"),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const { user, assetCode, limit } = req.body;
+        res.json(await globeWallet.buildSetSpendLimitTx({ user, assetCode, limit: toStroops(limit).toString() }));
       } catch (err) {
         next(err);
       }
