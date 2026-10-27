@@ -6,12 +6,15 @@
  * rather than one of the many lookalike `USDC` issuers on the network.
  * It is not a statement about the asset's value or safety.
  *
- * The built-in list is deliberately tiny and per-network. Operators extend
- * it per environment with `VERIFIED_ASSETS` (comma-separated CODE:ISSUER),
+ * The reviewed list lives in data/verified-assets.<network>.json (see
+ * docs/verified-assets.md). Operators extend it per environment with
+ * `VERIFIED_ASSETS` (comma-separated CODE:ISSUER),
  * the same variable the activity feed's `unknown_asset` flag reads, so both
  * features always agree on what "verified" means.
  */
-import * as StellarSdk from "@stellar/stellar-sdk";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { StrKey } from "@stellar/stellar-sdk";
 import { config } from "../config";
 import { assetKey, parseVerifiedAssetsList } from "./paymentFlags";
 
@@ -20,20 +23,79 @@ export interface CuratedAsset {
   issuer: string;
 }
 
-const CURATED_BY_PASSPHRASE: Record<string, CuratedAsset[]> = {
-  [StellarSdk.Networks.PUBLIC]: [
-    {
-      code: "USDC",
-      issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
-    },
-  ],
-  [StellarSdk.Networks.TESTNET]: [
-    {
-      code: "USDC",
-      issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-    },
-  ],
-};
+/** One reviewed entry in data/verified-assets.<network>.json (#54). */
+export interface VerifiedAsset extends CuratedAsset {
+  domain: string;
+  name: string;
+  /** Enables CoinGecko pricing for this asset (#55). */
+  coingeckoId?: string;
+  /** The DEX USD quote asset; at most one per network (#55). */
+  usdPeg?: boolean;
+}
+
+const REQUIRED_FIELDS = ["code", "issuer", "domain", "name"] as const;
+const ALLOWED_FIELDS = new Set<string>([...REQUIRED_FIELDS, "coingeckoId", "usdPeg"]);
+const ASSET_CODE = /^[A-Za-z0-9]{1,12}$/;
+const DOMAIN = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i;
+
+/**
+ * Parse and strictly validate a verified-asset file. Anything suspicious
+ * (unknown field, bad code/domain, issuer failing the StrKey checksum,
+ * duplicate, two usdPeg entries, network mismatch) throws, so the API
+ * refuses to boot instead of serving a partly-trusted list.
+ */
+export function parseVerifiedAssetFile(raw: unknown, network: string, source = "verified-assets"): VerifiedAsset[] {
+  const fail = (msg: string): never => {
+    throw new Error(`${source}: ${msg}`);
+  };
+  if (typeof raw !== "object" || raw === null) fail("must be a JSON object");
+  const file = raw as { network?: unknown; assets?: unknown };
+  if (file.network !== network) fail(`network is ${String(file.network)}, expected ${network}`);
+  if (!Array.isArray(file.assets)) fail("assets must be an array");
+
+  const seen = new Set<string>();
+  let pegs = 0;
+  return (file.assets as unknown[]).map((entry, i) => {
+    const where = `assets[${i}]`;
+    if (typeof entry !== "object" || entry === null) fail(`${where} must be an object`);
+    const asset = entry as Record<string, unknown>;
+    for (const key of Object.keys(asset)) {
+      if (!ALLOWED_FIELDS.has(key)) fail(`${where} has unknown field "${key}"`);
+    }
+    for (const key of REQUIRED_FIELDS) {
+      if (typeof asset[key] !== "string" || asset[key] === "") fail(`${where}.${key} is required`);
+    }
+    const code = asset.code as string;
+    const issuer = asset.issuer as string;
+    if (!ASSET_CODE.test(code)) fail(`${where}.code "${code}" is not a valid asset code`);
+    if (!StrKey.isValidEd25519PublicKey(issuer)) fail(`${where}.issuer is not a valid G... address`);
+    if (!DOMAIN.test(asset.domain as string)) fail(`${where}.domain is not a valid domain`);
+    if (asset.coingeckoId !== undefined && typeof asset.coingeckoId !== "string") {
+      fail(`${where}.coingeckoId must be a string`);
+    }
+    if (asset.usdPeg !== undefined && typeof asset.usdPeg !== "boolean") fail(`${where}.usdPeg must be a boolean`);
+    if (asset.usdPeg === true && ++pegs > 1) fail("at most one asset may set usdPeg");
+    const key = assetKey(code, issuer);
+    if (seen.has(key)) fail(`${where} duplicates ${key}`);
+    seen.add(key);
+    return asset as unknown as VerifiedAsset;
+  });
+}
+
+let cached: VerifiedAsset[] | undefined;
+
+/** The verified-asset list for STELLAR_NETWORK, loaded and validated once. */
+export function getVerifiedAssets(): VerifiedAsset[] {
+  if (!cached) {
+    const path = join(__dirname, "..", "..", "data", `verified-assets.${config.STELLAR_NETWORK}.json`);
+    cached = parseVerifiedAssetFile(JSON.parse(readFileSync(path, "utf8")), config.STELLAR_NETWORK, path);
+  }
+  return cached;
+}
+
+export function findVerifiedAsset(code: string, issuer: string): VerifiedAsset | undefined {
+  return getVerifiedAssets().find((a) => a.code === code && a.issuer === issuer);
+}
 
 export class VerifiedAssetRegistry {
   private readonly keys: ReadonlySet<string>;
@@ -53,9 +115,7 @@ export class VerifiedAssetRegistry {
   }
 }
 
+/** Reviewed list for this network plus any VERIFIED_ASSETS extras. */
 export function createVerifiedAssetRegistry(): VerifiedAssetRegistry {
-  return new VerifiedAssetRegistry(
-    CURATED_BY_PASSPHRASE[config.NETWORK_PASSPHRASE] ?? [],
-    parseVerifiedAssetsList(config.VERIFIED_ASSETS)
-  );
+  return new VerifiedAssetRegistry(getVerifiedAssets(), parseVerifiedAssetsList(config.VERIFIED_ASSETS));
 }
