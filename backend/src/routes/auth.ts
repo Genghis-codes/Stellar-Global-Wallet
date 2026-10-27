@@ -3,7 +3,7 @@ import { Keypair, StrKey, WebAuth } from "@stellar/stellar-sdk";
 import { body, query } from "express-validator";
 import { rateLimit } from "express-rate-limit";
 import { AppError, UnauthorizedError } from "../errors/appError";
-import { apiKeyAuth } from "../middleware/apiKeyAuth";
+import { requireLoginApiKey } from "../middleware/loginApiKey";
 import { assertValidRequest } from "../middleware/requestValidation";
 import {
   generateAccessToken,
@@ -60,7 +60,7 @@ function getServerKeypair(): Keypair {
 authRouter.post(
   "/login",
   loginLimiter,
-  apiKeyAuth,
+  requireLoginApiKey,
   async (_req, res, next) => {
     try {
       // We currently use a single shared API key model.
