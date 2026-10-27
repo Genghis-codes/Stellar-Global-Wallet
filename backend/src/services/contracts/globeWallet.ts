@@ -2,8 +2,14 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import { config } from "../../config";
 import { AppError } from "../../errors/appError";
 import { SorobanService, ContractCallResult, PreparedInvocation } from "../soroban";
-import { SorobanNotConfiguredError, SorobanSimulationError, SorobanTransactionError } from "../sorobanErrors";
-import { describeGlobeWalletError } from "./globeWalletErrors";
+import {
+  SorobanContractError,
+  SorobanNotConfiguredError,
+  SorobanSimulationError,
+  SorobanTransactionError,
+} from "../sorobanErrors";
+import type { SubmitSignedPending, SubmitSignedResult } from "../transactionEnvelope";
+import { describeGlobeWalletError, extractContractErrorCode, getGlobeWalletApiCode } from "./globeWalletErrors";
 import type {
   AssetInfo,
   AllowedTokenInfo,
