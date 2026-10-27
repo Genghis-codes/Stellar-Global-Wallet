@@ -1,7 +1,7 @@
 /**
  * SDK HTTP client with transparent token refresh and retry handling.
  *
- * - Single-flight refresh: parallel 401s share one `/auth/refresh` call.
+ * - Single-flight refresh: parallel 401s share one `/api/v1/auth/refresh` call.
  * - Only `TOKEN_EXPIRED` triggers refresh; other 401s surface as-is.
  * - Pluggable `TokenStore` (in-memory default; web/mobile supply their own).
  * - 429/503 retried with exponential backoff + jitter, honouring `Retry-After`.
@@ -10,25 +10,31 @@
  * Runtime-safe for Node, browsers and React Native (no Node-only modules).
  */
 
+/** The pair returned by sign-in and by `/api/v1/auth/refresh`. */
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken?: string;
+}
+
 export interface TokenStore {
-  get(): Promise<string | null> | string | null;
-  set(token: string): Promise<void> | void;
+  get(): Promise<AuthTokens | null> | AuthTokens | null;
+  set(tokens: AuthTokens): Promise<void> | void;
   clear(): Promise<void> | void;
 }
 
 export class InMemoryTokenStore implements TokenStore {
-  private token: string | null = null;
+  private tokens: AuthTokens | null = null;
 
-  get(): string | null {
-    return this.token;
+  get(): AuthTokens | null {
+    return this.tokens;
   }
 
-  set(token: string): void {
-    this.token = token;
+  set(tokens: AuthTokens): void {
+    this.tokens = tokens;
   }
 
   clear(): void {
-    this.token = null;
+    this.tokens = null;
   }
 }
 
@@ -168,29 +174,36 @@ export class ApiClient {
 
   private async performRefresh(): Promise<string> {
     const current = await this.tokenStore.get();
-    const res = await this.fetchImpl(`${this.baseUrl}/auth/refresh`, {
+    if (!current?.refreshToken) {
+      await this.expireSession();
+    }
+
+    const res = await this.fetchImpl(`${this.baseUrl}/api/v1/auth/refresh`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(current ? { Authorization: `Bearer ${current}` } : {}),
-      },
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: current?.refreshToken }),
     });
 
     if (!res.ok) {
-      await this.tokenStore.clear();
-      this.onSessionExpired?.();
-      throw new SessionExpiredError();
+      await this.expireSession();
     }
 
-    const data = (await res.json()) as { accessToken?: string; token?: string };
-    const token = data.accessToken ?? data.token;
-    if (!token) {
-      await this.tokenStore.clear();
-      this.onSessionExpired?.();
-      throw new SessionExpiredError();
+    // Refresh tokens rotate on every use, so store the new pair.
+    const data = (await res.json()) as { accessToken?: string; refreshToken?: string };
+    if (!data.accessToken) {
+      await this.expireSession();
     }
-    await this.tokenStore.set(token);
-    return token;
+    await this.tokenStore.set({
+      accessToken: data.accessToken as string,
+      refreshToken: data.refreshToken ?? current?.refreshToken,
+    });
+    return data.accessToken as string;
+  }
+
+  private async expireSession(): Promise<never> {
+    await this.tokenStore.clear();
+    this.onSessionExpired?.();
+    throw new SessionExpiredError();
   }
 
   async request<T = unknown>(path: string, options: RequestOptions = {}): Promise<T> {
@@ -205,7 +218,7 @@ export class ApiClient {
         throw new DOMException('Aborted', 'AbortError');
       }
 
-      const token = await this.tokenStore.get();
+      const token = (await this.tokenStore.get())?.accessToken;
       const headers: Record<string, string> = {
         ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),

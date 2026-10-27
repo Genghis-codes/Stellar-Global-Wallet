@@ -102,4 +102,4 @@ export {
   SessionExpiredError,
   createClient,
 } from "./client.js";
-export type { ApiClientOptions, RequestOptions, TokenStore } from "./client.js";
+export type { ApiClientOptions, AuthTokens, RequestOptions, TokenStore } from "./client.js";
