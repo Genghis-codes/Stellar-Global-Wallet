@@ -1,64 +1,85 @@
 # Scans every pull request for malware and malicious or vulnerable
-# dependencies before it can be merged. Runs on `pull_request` (not
-# `pull_request_target`), so code from forks never sees repo secrets.
+# dependencies the moment it is opened or updated.
+#
+# Scans that only *read* files run on `pull_request_target`, which starts
+# immediately even for fork PRs from first-time contributors (no "Approve
+# and run" click needed). They never execute code from the PR: the PR is
+# checked out into a separate folder, without credentials, and only
+# scanned. The install-based signature check executes npm against the
+# PR's files, so it stays on `pull_request`.
 name: PR Security Scan
 
 on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
-  group: pr-security-${{ github.event.pull_request.number }}
+  group: pr-security-${{ github.event_name }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   dependency-review:
     name: Malicious & vulnerable dependencies
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v5
-
       # Fails if the PR adds a package with a GitHub advisory, including
-      # malware advisories (packages known to be malicious).
+      # malware advisories (packages known to be malicious). Compares the
+      # dependency graphs of base and head through the API; no checkout.
       - uses: actions/dependency-review-action@v4
         with:
+          base-ref: ${{ github.event.pull_request.base.sha }}
+          head-ref: ${{ github.event.pull_request.head.sha }}
           fail-on-severity: high
           comment-summary-in-pr: on-failure
 
   lockfile:
-    name: Lockfile integrity
+    name: Lockfile sources
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out PR files (scan only, never executed)
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          persist-credentials: false
 
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
 
-      # Every package must come from the npm registry over HTTPS, so a PR
-      # can't swap a dependency for a tarball on someone else's server.
+      # Every package must come from the npm registry over HTTPS with an
+      # integrity hash, so a PR can't swap a dependency for a tarball on
+      # someone else's server. Runs outside the PR folder so the PR's own
+      # .npmrc can't change how npx behaves.
       - name: Check lockfile sources
-        run: npx --yes lockfile-lint@4 --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
-
-      - name: Install without running install scripts
-        run: npm ci --ignore-scripts
-
-      # Verifies registry signatures and provenance for installed packages.
-      - name: Verify package signatures
-        run: npm audit signatures
+        working-directory: ${{ runner.temp }}
+        run: |
+          npx --yes lockfile-lint@4 \
+            --path "$GITHUB_WORKSPACE/pr/package-lock.json" \
+            --type npm --allowed-hosts npm --validate-https --validate-integrity
 
   malware-scan:
     name: ClamAV scan of changed files
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out PR files (scan only, never executed)
+        uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Install ClamAV
         run: |
@@ -68,15 +89,38 @@ jobs:
           sudo freshclam
 
       - name: Scan files changed in this PR
+        working-directory: pr
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" > changed.txt
-          echo "Changed files: $(wc -l < changed.txt)"
-          if [ ! -s changed.txt ]; then
+          git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null || true
+          git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" > "$RUNNER_TEMP/changed.txt"
+          echo "Changed files: $(wc -l < "$RUNNER_TEMP/changed.txt")"
+          if [ ! -s "$RUNNER_TEMP/changed.txt" ]; then
             echo "No added or modified files to scan."
             exit 0
           fi
           # Exit code 1 means a virus was found; the job fails.
-          clamscan --infected --file-list=changed.txt
+          clamscan --infected --file-list="$RUNNER_TEMP/changed.txt"
+
+  package-signatures:
+    name: Package signatures
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install without running install scripts
+        run: npm ci --ignore-scripts
+
+      # Verifies registry signatures and provenance for installed packages.
+      - name: Verify package signatures
+        run: npm audit signatures
