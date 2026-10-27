@@ -12,7 +12,7 @@ members = [
 # release/wasm32 build, which cannot compile it, breaking every deploy build.
 # Pin to 21.7.7 is currently unreviewed drift. Not yet evaluated for upgrade to 27.x.
 # Requires careful migration testing due to protocol coupling and security-relevant fixes.
-soroban-sdk = { version = "21.7.7" }
+soroban-sdk = { version = "29.0.1" }
 
 # `soroban-env-host` 21.2.1 — a transitive dependency of `soroban-sdk`
 # 21.7.7 via `soroban-ledger-snapshot`, pulled in only under the
