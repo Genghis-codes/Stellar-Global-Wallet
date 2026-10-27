@@ -73,6 +73,7 @@ describe("Secret key length validation", () => {
       .send(payload)
       .expect(400);
 
-    expect(res.body.errors).toBeDefined();
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(Array.isArray(res.body.error.details)).toBe(true);
   });
 });
