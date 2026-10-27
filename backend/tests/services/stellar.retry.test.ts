@@ -1,6 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { StellarService } from "../../src/services/stellar";
-import { SequenceConflictError } from "../../src/services/stellarErrors";
+import { NonRetryableHorizonError, SequenceConflictError } from "../../src/services/stellarErrors";
 
 function fakeAccountResponse(publicKey: string, sequence: string) {
   return new StellarSdk.Account(publicKey, sequence) as unknown as StellarSdk.Horizon.AccountResponse;
@@ -40,6 +40,9 @@ describe("StellarService tx_bad_seq retry (issue #9)", () => {
   afterEach(() => jest.restoreAllMocks());
 
   it("retries on tx_bad_seq and succeeds on second attempt", async () => {
+    // sendPayment also loads the destination (SEP-29 memo check), so only
+    // source-account loads count as "re-reading the sequence".
+    const source = StellarSdk.Keypair.random();
     let loadAccountCalls = 0;
     let submitCalls = 0;
     let sequence = 100;
@@ -47,7 +50,7 @@ describe("StellarService tx_bad_seq retry (issue #9)", () => {
     jest
       .spyOn(StellarSdk.Horizon.Server.prototype, "loadAccount")
       .mockImplementation(async (publicKey: string) => {
-        loadAccountCalls++;
+        if (publicKey === source.publicKey()) loadAccountCalls++;
         return fakeAccountResponse(publicKey, String(sequence));
       });
 
@@ -64,7 +67,7 @@ describe("StellarService tx_bad_seq retry (issue #9)", () => {
 
     const stellar = new StellarService();
     const result = await stellar.sendPayment({
-      sourceSecretKey: StellarSdk.Keypair.random().secret(),
+      sourceSecretKey: source.secret(),
       destinationPublicKey: StellarSdk.Keypair.random().publicKey(),
       amount: "1",
     });
@@ -117,7 +120,7 @@ describe("StellarService tx_bad_seq retry (issue #9)", () => {
       amount: "1",
     });
 
-    await expect(promise).rejects.toBeInstanceOf(StellarSdk.BadResponseError);
+    await expect(promise).rejects.toBeInstanceOf(NonRetryableHorizonError);
     expect(submitCalls).toBe(1);
   });
 
