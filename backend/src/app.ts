@@ -9,7 +9,7 @@ import { createWalletRouter } from "./routes/wallet";
 import { createAccountRouter } from "./routes/account";
 import { createContractRouter } from "./routes/contract";
 import { createTransactionsRouter } from "./routes/transactions";
-import { priceRouter } from "./routes/price";
+import { createPriceRouter } from "./routes/price";
 import { createAssetsRouter } from "./routes/assets";
 import { authRouter } from "./routes/auth";
 import { cspReportRouter } from "./routes/cspReport";
@@ -446,7 +446,7 @@ export function createApp(
   // #63 — resolve G.../M.../federation (name*domain) addresses
   app.use("/api/v1/resolve", createResolveRouter());
   app.use("/api/v1/contract", createContractRouter(globeWallet));
-  app.use("/api/v1/price", priceRouter);
+  app.use("/api/v1/price", createPriceRouter(priceServices.prices, priceServices.history));
   // #52, #53 — asset search and stellar.toml metadata for the add-asset flow
   app.use("/api/v1/assets", createAssetsRouter());
   app.use("/api/v1/auth", authRouter);
