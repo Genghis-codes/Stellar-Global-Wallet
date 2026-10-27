@@ -11,8 +11,12 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol,
 };
 
+// Named WrapperDataKey rather than DataKey: globe-wallet links this crate,
+// so this type lands in globe-wallet's contract spec too, and two types
+// called DataKey break the generated TypeScript bindings. Only variant
+// names are stored on-chain, so the rename does not change storage keys.
 #[contracttype]
-pub enum DataKey {
+pub enum WrapperDataKey {
     /// (owner, spender) → (amount, expiry_ledger)
     Allowance(Address, Address),
 }
@@ -70,7 +74,7 @@ impl TokenWrapper {
         if expiry_ledger <= env.ledger().sequence() {
             return Err(WrapperError::InvalidExpiry);
         }
-        let key = DataKey::Allowance(owner.clone(), spender.clone());
+        let key = WrapperDataKey::Allowance(owner.clone(), spender.clone());
         env.storage()
             .persistent()
             .set(&key, &Allowance { amount, expiry_ledger });
@@ -88,7 +92,7 @@ impl TokenWrapper {
 
     /// Return current allowance for (owner, spender).
     pub fn allowance(env: Env, owner: Address, spender: Address) -> Allowance {
-        let key = DataKey::Allowance(owner, spender);
+        let key = WrapperDataKey::Allowance(owner, spender);
         env.storage()
             .persistent()
             .get(&key)
@@ -111,7 +115,7 @@ impl TokenWrapper {
         if amount <= 0 {
             return Err(WrapperError::InvalidAmount);
         }
-        let key = DataKey::Allowance(from.clone(), spender.clone());
+        let key = WrapperDataKey::Allowance(from.clone(), spender.clone());
         let current: Allowance = env
             .storage()
             .persistent()
