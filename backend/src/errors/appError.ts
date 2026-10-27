@@ -155,14 +155,14 @@ export function isAppError(error: unknown): error is AppError {
 }
 
 /**
- * Single source of truth for the user-facing error catalogue. The
- * `docs/error-codes.md` page is generated from this map via
- * `npm run docs:errors`, so copy changes here flow straight into the docs.
+ * User-facing copy for error codes. Messages are intentionally jargon-free:
+ * `tx_bad_seq` becomes "Something changed, please try again" rather than
+ * leaking Horizon internals.
  *
- * Messages are intentionally jargon-free: `tx_bad_seq` becomes "Something
- * changed, please try again" rather than leaking Horizon internals.
+ * Not every code has bespoke copy yet; use `getErrorCopy`, which falls back
+ * to generic copy derived from the HTTP status.
  */
-export const ERROR_CODE_COPY: Record<ErrorCode, ErrorCodeCopy> = {
+export const ERROR_CODE_COPY: Partial<Record<ErrorCode, ErrorCodeCopy>> = {
   INTERNAL_ERROR: {
     status: 500,
     retryable: true,
@@ -275,7 +275,7 @@ export const ERROR_CODE_COPY: Record<ErrorCode, ErrorCodeCopy> = {
     message: "That page doesn't exist.",
     action: "Check the address or return to the home screen.",
   },
-  HORIZON_TX_BAD_SEQ: {
+  HORIZON_TX_BAD_SEQUENCE: {
     status: 409,
     retryable: true,
     when: "The transaction sequence number is out of date.",
@@ -296,7 +296,7 @@ export const ERROR_CODE_COPY: Record<ErrorCode, ErrorCodeCopy> = {
     message: "You don't have enough funds for this.",
     action: "Add funds or lower the amount and try again.",
   },
-  HORIZON_TX_NO_ACCOUNT: {
+  HORIZON_OP_NO_ACCOUNT: {
     status: 422,
     retryable: false,
     when: "The source account does not exist on the network.",
@@ -324,32 +324,36 @@ export const ERROR_CODE_COPY: Record<ErrorCode, ErrorCodeCopy> = {
     message: "We couldn't prepare this contract action.",
     action: "Try again. If it persists, contact support.",
   },
-  SOROBAN_CONTRACT_ERROR: {
+  CONTRACT_ERROR: {
     status: 422,
     retryable: false,
     when: "A Soroban contract returned an error result.",
     message: "The contract couldn't complete this action.",
     action: "Review the details and try again.",
   },
-  SOROBAN_INVOKE_FAILED: {
+  CONTRACT_INVOCATION_FAILED: {
     status: 502,
     retryable: true,
     when: "A Soroban contract invocation failed to submit.",
     message: "We couldn't submit this contract action.",
     action: "Try again in a moment.",
   },
-  GLOBE_WALLET_NOT_FOUND: {
-    status: 404,
-    retryable: false,
-    when: "The requested Globe wallet does not exist.",
-    message: "We couldn't find that wallet.",
-    action: "Pick a different wallet or create a new one.",
-  },
-  GLOBE_WALLET_CONFLICT: {
-    status: 409,
-    retryable: false,
-    when: "A Globe wallet change conflicts with existing state.",
-    message: "This wallet was changed somewhere else.",
-    action: "Refresh and try again.",
-  },
 };
+
+/** Copy for `code`, or generic copy for its status when none is written yet. */
+export function getErrorCopy(code: ErrorCode, status = 500): ErrorCodeCopy {
+  const copy = ERROR_CODE_COPY[code];
+  if (copy) {
+    return copy;
+  }
+  if (status >= 500) {
+    return { ...(ERROR_CODE_COPY.INTERNAL_ERROR as ErrorCodeCopy), status };
+  }
+  return {
+    status,
+    retryable: status === 429,
+    when: "The request could not be completed.",
+    message: "We couldn't complete that request.",
+    action: "Check the details and try again.",
+  };
+}
