@@ -6,12 +6,14 @@ on:
       - "backend/**"
       - "packages/**"
       - "package.json"
+      - "package-lock.json"
       - ".github/workflows/backend.yml"
   pull_request:
     paths:
       - "backend/**"
       - "packages/**"
       - "package.json"
+      - "package-lock.json"
       - ".github/workflows/backend.yml"
 
 permissions:
@@ -28,16 +30,20 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
 
       - name: Install dependencies
-        # Installed at the repo root (npm workspaces — see root package.json)
-        # so the backend's "@stellar-global-wallet/types" workspace
-        # dependency (packages/types) resolves. No root package-lock.json is
-        # committed yet (see PR description for why), so this uses
-        # `npm install` rather than `npm ci`; switch back to `npm ci` with
-        # setup-node's built-in npm cache once one is generated and committed.
-        run: npm install
+        # One install at the repo root resolves the backend's workspace
+        # dependencies (@globe-wallet/sdk, @stellar-global-wallet/types).
+        run: npm ci
+
+      - name: Build workspace packages the backend imports
+        # The SDK and the contract bindings are consumed from their dist/
+        # output, so build them before type-checking or testing the backend.
+        run: |
+          npm run build --workspace packages/bindings/globe-wallet
+          npm run build --workspace packages/sdk
 
       - name: Type-check
         run: npm run type-check --workspace backend
