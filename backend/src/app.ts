@@ -113,10 +113,10 @@ async function checkRpc(signal: AbortSignal): Promise<DependencyCheck> {
 }
 
 async function checkPostgres(): Promise<DependencyCheck> {
-  // Postgres is only required when the lock backend is postgres.
-  if (config.LOCK_BACKEND !== "postgres") return skippedCheck();
+  // Postgres backs the audit log, idempotency keys, sessions and device
+  // tokens regardless of LOCK_BACKEND, so it is always checked.
   return timedCheck(async () => {
-    const { pool } = await import("./db/pool");
+    const { pool } = await import("./db");
     await pool.query("SELECT 1");
   });
 }
@@ -125,8 +125,14 @@ async function checkRedis(): Promise<DependencyCheck> {
   // Redis is only required when the lock backend is redis.
   if (config.LOCK_BACKEND !== "redis") return skippedCheck();
   return timedCheck(async () => {
-    const { redis } = await import("./db/redis");
-    await redis.ping();
+    const { createClient } = await import("redis");
+    const client = createClient({ url: config.REDIS_URL });
+    try {
+      await client.connect();
+      await client.ping();
+    } finally {
+      await client.quit().catch(() => undefined);
+    }
   });
 }
 
