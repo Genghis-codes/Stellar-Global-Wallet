@@ -1,9 +1,11 @@
 {
   "name": "stellar-global-wallet",
   "private": true,
-  "description": "Workspace root for GlobeWallet's publishable packages (backend and contract are not part of this workspace and keep their own independent tooling).",
+  "description": "Workspace root for GlobeWallet: the backend API and the publishable packages/*. The Rust contracts in contract/ keep their own cargo tooling.",
   "workspaces": [
-    "packages/*"
+    "backend",
+    "packages/*",
+    "packages/bindings/*"
   ],
   "scripts": {
     "changeset": "changeset",
