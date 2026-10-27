@@ -204,7 +204,7 @@ export function createAccountRouter(stellar: StellarService): Router {
           limit: limit ?? DEFAULT_PAGE_LIMIT,
           cursor,
         });
-        const page = paginate(result.transactions.map(withDecodedMuxed), result.next);
+        const page = paginate(result.transactions, result.next);
         res.json({
           ...page,
           // @deprecated — use `items` + `nextCursor`. Kept for one version.
