@@ -1,13 +1,11 @@
 import { Router } from "express";
 import { body, param, query } from "express-validator";
 import { Account, MuxedAccount } from "@stellar/stellar-sdk";
-import { z } from "zod";
 import { assertValidRequest } from "../middleware/requestValidation";
 import { StellarService } from "../services/stellar";
 import { getUnifiedActivityFeed } from "../services/activityFeed";
 import { isGAddress, publicKeyMessage } from "../utils/stellarAddress";
 import { AppError } from "../errors/appError";
-import { getDb } from "../db";
 import { jwtAuth } from "../middleware/jwtAuth";
 import { isValidMuxedId } from "../utils/muxed";
 import { computeMultisigInfo, computeReserveBreakdown, spendableBalance } from "../services/accountInfo";
@@ -54,42 +52,6 @@ export function parsePageQuery(raw: { cursor?: unknown; limit?: unknown }): Page
   }
   const cursor = typeof raw.cursor === "string" && raw.cursor.length > 0 ? raw.cursor : undefined;
   return { cursor, limit };
-}
-
-// #68 — user preferences schema. Only these keys are allowed; unknown keys
-// are rejected so the stored JSONB stays predictable across web and mobile.
-const preferencesSchema = z
-  .object({
-    currency: z.string().min(1).max(16).optional(),
-    language: z.string().min(2).max(16).optional(),
-    hiddenAssets: z.array(z.string().min(1).max(128)).max(500).optional(),
-    notifications: z
-      .object({
-        email: z.boolean().optional(),
-        push: z.boolean().optional(),
-        payments: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-
-type Preferences = z.infer<typeof preferencesSchema>;
-
-function parsePreferences(input: unknown): Preferences {
-  const result = preferencesSchema.safeParse(input);
-  if (!result.success) {
-    throw new AppError(
-      "VALIDATION_ERROR",
-      400,
-      "Invalid preferences payload",
-      result.error.issues.map((issue) => ({
-        path: issue.path.join("."),
-        message: issue.message,
-      }))
-    );
-  }
-  return result.data;
 }
 
 export function createAccountRouter(stellar: StellarService): Router {

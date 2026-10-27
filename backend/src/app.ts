@@ -21,6 +21,7 @@ import { createPendingTxRouter } from "./routes/pendingTx";
 import { createResolveRouter } from "./routes/resolve";
 import { createNetworkRouter } from "./routes/network";
 import { createDevRouter } from "./routes/dev";
+import { createPreferencesRouter } from "./routes/preferences";
 import { localeMiddleware } from "./middleware/locale";
 import { errorHandler } from "./middleware/errorHandler";
 import { config } from "./config";
@@ -448,6 +449,8 @@ export function createApp(
   app.use("/api/v1/me/devices", devicesRouter);
   // #90 — email notification fallback (verified email management)
   app.use("/api/v1/me/email", emailRouter);
+  // #68 — per-account preferences (currency, language, hidden assets, notifications)
+  app.use("/api/v1/me/preferences", createPreferencesRouter());
   // #74 — pending multisig transaction store for co-signers
   app.use("/api/v1/pending-txs", createPendingTxRouter(stellar));
   // #81 — Expose network, Horizon/RPC URLs, and pending upgrade timelock state

@@ -2,6 +2,7 @@ import { Pool } from "pg";
 import { config } from "./config";
 import { ensureDevicesTable } from "./services/deviceRegistry";
 import { ensureVerifiedEmailsTable } from "./services/emailVerification";
+import { ensurePreferencesTable } from "./routes/preferences";
 
 export const pool = new Pool({ connectionString: config.DATABASE_URL });
 
@@ -38,6 +39,9 @@ export async function ensureAuditTable() {
 
   // #37 — first-class session records for listing and revoke-all.
   await ensureSessionsTable(pool);
+
+  // #68 — user preferences.
+  await ensurePreferencesTable(pool);
 }
 
 export async function ensurePendingTxsTable(db: Pool) {
