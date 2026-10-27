@@ -170,14 +170,12 @@ const envSchema = z.object({
   // Optional CoinGecko demo/pro API key, sent as x-cg-demo-api-key.
   COINGECKO_API_KEY: z.string().optional(),
 
-  // #77 — contract event indexer. The worker polls Soroban RPC getEvents
-  // filtered by GLOBE_WALLET_CONTRACT_ID and persists a cursor in the
-  // indexer_state table so restarts resume where they left off. These knobs
-  // let ops tune polling without a deploy.
+  // #77 — contract event indexer settings. The indexer worker itself is not
+  // implemented yet (the #141 PR only added config and schema); these are
+  // reserved so its deployment config can be prepared ahead of it.
   //
   // Ledger to start indexing from when no cursor exists yet (e.g. the
-  // contract's deploy ledger). `npm run indexer:backfill -- --from-ledger N`
-  // overrides this for a one-off backfill run.
+  // contract's deploy ledger).
   INDEXER_START_LEDGER: z.coerce.number().int().min(0).default(0),
   // How often the worker polls getEvents, in milliseconds.
   INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
