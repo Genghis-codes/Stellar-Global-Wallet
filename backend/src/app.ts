@@ -20,6 +20,7 @@ import { createConfigRouter } from "./routes/config";
 import { createPendingTxRouter } from "./routes/pendingTx";
 import { createResolveRouter } from "./routes/resolve";
 import { createNetworkRouter } from "./routes/network";
+import { createDevRouter } from "./routes/dev";
 import { localeMiddleware } from "./middleware/locale";
 import { errorHandler } from "./middleware/errorHandler";
 import { requireAccountMatch } from "./middleware/requireAccountMatch";
