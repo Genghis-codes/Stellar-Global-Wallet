@@ -34,7 +34,7 @@
     "test:smoke": "node --test --import tsx tests/smoke/preview-api.test.ts"
   },
   "dependencies": {
-    "@globe-wallet/bindings-globe-wallet": "0.0.0",
+    "@globe-wallet/bindings-globe-wallet": "^0.0.0",
     "@stellar/stellar-sdk": "^16.0.1"
   },
   "devDependencies": {
