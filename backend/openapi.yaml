@@ -861,6 +861,232 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/HealthDetails' }
+  /network/fees:
+    get:
+      tags: [network]
+      summary: Low/normal/high per-operation fees from Horizon fee stats (#13)
+      description: >-
+        p10/p50/p90 of recent fees, never below the 100-stroop base fee.
+        Cached for 5 seconds. Falls back to the base fee for every tier
+        with source "fallback" when Horizon is unreachable.
+      operationId: getNetworkFees
+      responses:
+        '200':
+          description: Fee estimate
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [low, normal, high, ledgerCapacityUsage, source]
+                properties:
+                  low: { $ref: '#/components/schemas/FeeTier' }
+                  normal: { $ref: '#/components/schemas/FeeTier' }
+                  high: { $ref: '#/components/schemas/FeeTier' }
+                  ledgerCapacityUsage: { type: string, example: "0.42" }
+                  source: { type: string, enum: [horizon, fallback] }
+  /assets/verified:
+    get:
+      tags: [assets]
+      summary: Reviewed verified-asset list for this network (#54)
+      operationId: getVerifiedAssets
+      responses:
+        '200':
+          description: Verified assets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [network, assets]
+                properties:
+                  network: { type: string, enum: [testnet, mainnet] }
+                  assets:
+                    type: array
+                    items:
+                      type: object
+                      required: [code, issuer, domain, name]
+                      properties:
+                        code: { type: string }
+                        issuer: { type: string }
+                        domain: { type: string }
+                        name: { type: string }
+  /dev/fund:
+    post:
+      tags: [dev]
+      summary: Fund a testnet account via Friendbot (#69, testnet only)
+      description: Not mounted on mainnet (404). An already-funded account returns alreadyFunded true.
+      operationId: fundTestnetAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [account]
+              properties:
+                account: { type: string, description: G... address }
+      responses:
+        '200':
+          description: Funded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [account, funded, alreadyFunded]
+                properties:
+                  account: { type: string }
+                  funded: { type: boolean }
+                  alreadyFunded: { type: boolean }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '502':
+          description: Friendbot unreachable or refused
+  /pending-txs:
+    post:
+      tags: [multisig]
+      summary: Share a partially signed transaction with co-signers (#74)
+      operationId: createPendingTx
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [xdr]
+              properties:
+                xdr: { type: string, description: Classic transaction envelope (base64) }
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PendingTx' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Caller is not a signer of the source account
+    get:
+      tags: [multisig]
+      summary: List open pending transactions for an account (#74)
+      operationId: listPendingTxs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: account
+          in: query
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Open pending transactions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PendingTx' }
+  /pending-txs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [multisig]
+      summary: Fetch a pending transaction to sign (#74)
+      operationId: getPendingTx
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pending transaction
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PendingTx' }
+        '404':
+          description: Not found
+    delete:
+      tags: [multisig]
+      summary: Cancel a pending transaction (creator only) (#74)
+      operationId: cancelPendingTx
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Cancelled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PendingTx' }
+  /pending-txs/{id}/signatures:
+    post:
+      tags: [multisig]
+      summary: Add signatures from a co-signer's signed copy (#74)
+      operationId: addPendingTxSignatures
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [xdr]
+              properties:
+                xdr: { type: string }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PendingTx' }
+        '409':
+          description: Different transaction, or no longer open
+  /me/preferences:
+    get:
+      tags: [account]
+      summary: The caller's preferences (#68)
+      operationId: getPreferences
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Preferences ({} when unset)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preferences: { $ref: '#/components/schemas/Preferences' }
+    put:
+      tags: [account]
+      summary: Set any subset of preference keys (#68)
+      operationId: updatePreferences
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Preferences' }
+      responses:
+        '200':
+          description: Merged preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  preferences: { $ref: '#/components/schemas/Preferences' }
+        '400':
+          $ref: '#/components/responses/BadRequest'
 components:
   securitySchemes:
     bearerAuth:
@@ -961,6 +1187,42 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    FeeTier:
+      type: object
+      required: [stroops, xlm]
+      properties:
+        stroops: { type: string, example: "100" }
+        xlm: { type: string, example: "0.0000100" }
+    PendingTx:
+      type: object
+      required: [id, account, xdr, hash, requiredWeight, collectedWeight, collectedSigners, status]
+      properties:
+        id: { type: string }
+        account: { type: string }
+        xdr: { type: string }
+        hash: { type: string }
+        requiredWeight: { type: integer }
+        collectedWeight: { type: integer }
+        collectedSigners: { type: array, items: { type: string } }
+        createdBy: { type: string }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        status: { type: string, enum: [pending, ready, submitted, cancelled, expired] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Preferences:
+      type: object
+      additionalProperties: false
+      properties:
+        currency: { type: string, maxLength: 16 }
+        language: { type: string, minLength: 2, maxLength: 16 }
+        hiddenAssets: { type: array, maxItems: 500, items: { type: string } }
+        notifications:
+          type: object
+          additionalProperties: false
+          properties:
+            email: { type: boolean }
+            push: { type: boolean }
+            payments: { type: boolean }
     DependencyCheck:
       type: object
       required: [ok, latencyMs]
