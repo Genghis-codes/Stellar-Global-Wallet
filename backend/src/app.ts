@@ -257,7 +257,7 @@ export function createApp(
   app.use("/api/v1/contract/wallet/submit", express.json({ limit: "64kb" }));
   // #74 — pending multisig store: create/add-signature/submit all carry an
   // XDR envelope (plus a signature), so they need the larger limit too.
-  app.use("/api/v1/wallet/pending-multisig", express.json({ limit: "64kb" }));
+  app.use("/api/v1/pending-txs", express.json({ limit: "64kb" }));
   app.use(express.json({ limit: "10kb" }));
 
   // #22 — every non-2xx response must use the shared error envelope
