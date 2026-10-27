@@ -10,6 +10,7 @@ import { AppError } from "../errors/appError";
 import { getDb } from "../db";
 import { jwtAuth } from "../middleware/jwtAuth";
 import { isValidMuxedId } from "../utils/muxed";
+import { computeMultisigInfo, computeReserveBreakdown, spendableBalance } from "../services/accountInfo";
 import { MAX_EXPORT_RANGE_MS, streamTransactionCsv } from "../services/transactionExport";
 
 // #24 — shared cursor pagination contract. `cursor` is an opaque paging token
@@ -147,16 +148,10 @@ export function createAccountRouter(stellar: StellarService): Router {
         assertValidRequest(req);
         const account = await stellar.getAccount(req.params.publicKey);
         const reserves = computeReserveBreakdown(account);
-        const balances = Array.isArray(account?.balances)
-          ? account.balances.map((b: any) => {
-              const available = toNumber(b?.balance);
-              const sellingLiabilities = toNumber(b?.selling_liabilities);
-              return {
-                ...b,
-                spendable: Math.max(available - sellingLiabilities, 0).toString(),
-              };
-            })
-          : [];
+        const balances = account.balances.map((b) => ({
+          ...b,
+          spendable: spendableBalance(b, reserves),
+        }));
         res.json({ reserves, balances });
       } catch (err) {
         next(err);
