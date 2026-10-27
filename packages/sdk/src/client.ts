@@ -114,6 +114,25 @@ function parseRetryAfter(value: string | null): number | null {
   return null;
 }
 
+/**
+ * Pull `{ code, message }` out of an error response. The backend wraps
+ * errors as `{ error: { code, message, details?, requestId } }`; a bare
+ * top-level `code` is still accepted for older deployments.
+ */
+function readErrorBody(body: unknown): { code?: string; message?: string } {
+  if (typeof body !== 'object' || body === null) return {};
+  const envelope = (body as { error?: unknown }).error;
+  if (typeof envelope === 'object' && envelope !== null) {
+    const { code, message } = envelope as { code?: unknown; message?: unknown };
+    return {
+      code: typeof code === 'string' ? code : undefined,
+      message: typeof message === 'string' ? message : undefined,
+    };
+  }
+  const code = (body as { code?: unknown }).code;
+  return { code: typeof code === 'string' ? code : undefined };
+}
+
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly tokenStore: TokenStore;
@@ -209,7 +228,7 @@ export class ApiClient {
 
       if (res.status === 401 && !refreshed) {
         const body = await this.safeJson(res);
-        const code = (body as { code?: string } | null)?.code;
+        const { code, message } = readErrorBody(body);
         if (code === 'TOKEN_EXPIRED') {
           refreshed = true;
           // Await the shared refresh; if aborted while waiting, propagate.
@@ -219,7 +238,7 @@ export class ApiClient {
           }
           continue;
         }
-        throw new ApiError('Unauthorized', res.status, code, body);
+        throw new ApiError(message ?? 'Unauthorized', res.status, code, body);
       }
 
       if ((res.status === 429 || res.status === 503) && idempotent && attempt < this.maxRetries) {
@@ -234,8 +253,8 @@ export class ApiClient {
 
       const body = await this.safeJson(res);
       if (!res.ok) {
-        const code = (body as { code?: string } | null)?.code;
-        throw new ApiError(`Request failed with status ${res.status}`, res.status, code, body);
+        const { code, message } = readErrorBody(body);
+        throw new ApiError(message ?? `Request failed with status ${res.status}`, res.status, code, body);
       }
       return body as T;
     }
