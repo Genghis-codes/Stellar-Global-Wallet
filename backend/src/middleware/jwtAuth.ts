@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { TokenExpiredError } from "jsonwebtoken";
 import { verifyAccessToken } from "../utils/jwt";
 import { UnauthorizedError } from "../errors/appError";
 
@@ -23,7 +24,13 @@ export function jwtAuth(req: Request, res: Response, next: NextFunction) {
     }
     req.user = { sub: payload.sub };
     next();
-  } catch {
-    next(new UnauthorizedError("Invalid or expired token", "AUTH_TOKEN_INVALID"));
+  } catch (err) {
+    // Clients refresh only on TOKEN_EXPIRED; anything else (bad signature,
+    // malformed token) means signing in again.
+    if (err instanceof TokenExpiredError) {
+      next(new UnauthorizedError("Access token expired", "TOKEN_EXPIRED"));
+      return;
+    }
+    next(new UnauthorizedError("Invalid token", "AUTH_TOKEN_INVALID"));
   }
 }
