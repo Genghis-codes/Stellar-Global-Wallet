@@ -25,7 +25,7 @@ describe("GlobeWalletContract asset builders (#8)", () => {
     expect(call.method).toBe("add_asset");
     expect(call.sourcePublicKey).toBe(USER);
     expect(StellarSdk.scValToNative(call.args[0])).toBe(USER);
-    const entries = call.args[1].scvMap();
+    const entries = call.args[1].map() ?? [];
     expect(entries.map((entry) => entry.key().sym())).toEqual(["code", "issuer"]);
     expect(StellarSdk.scValToNative(entries[0].val())).toBe("USDC");
     expect(StellarSdk.scValToNative(entries[1].val())).toBe(ISSUER);
@@ -44,10 +44,10 @@ describe("GlobeWalletContract asset builders (#8)", () => {
     });
 
     const assetInfo = buildUnsignedTransaction.mock.calls[0][0].args[1];
-    const entries = assetInfo.scvMap();
+    const entries = assetInfo.map() ?? [];
     expect(entries[0].key().sym()).toBe("code");
     expect(entries[1].key().sym()).toBe("issuer");
-    expect(entries[1].val().switch()).toBe(StellarSdk.xdr.ScValType.scvVoid);
+    expect(entries[1].val().switch().name).toBe("scvVoid");
   });
 
   it("rejects an asset that is already registered, case-insensitively", async () => {
