@@ -116,7 +116,8 @@ describe("StellarService.sendPayment SEP-29 memo check (issue #6)", () => {
       .spyOn(StellarSdk.Horizon.Server.prototype, "loadAccount")
       .mockImplementation(async (publicKey: string) => {
         if (publicKey === destination) {
-          throw new Error("Account does not exist");
+          // Horizon answers 404 for an unfunded account.
+          throw new StellarSdk.NotFoundError("Not Found", { status: 404 });
         }
         return fakeAccountResponse(publicKey, "100");
       });
