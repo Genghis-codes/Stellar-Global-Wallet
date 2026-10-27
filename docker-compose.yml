@@ -32,11 +32,11 @@ services:
     ports:
       - "4000:4000"
     env_file:
-      # Copy .env.example to .env (see README) for JWT_SECRET, API_KEY,
-      # CORS_ORIGIN, etc. DATABASE_URL/REDIS_URL are intentionally not read
-      # from it — see `environment` below, which points at the containers
-      # on the compose network instead of a developer's local .env values.
-      - .env
+      # Copy backend/.env.example to backend/.env (see README) for
+      # JWT_SECRET, API_KEY, CORS_ORIGIN, etc. DATABASE_URL/REDIS_URL from it
+      # are overridden by `environment` below, which points at the
+      # containers on the compose network instead of localhost.
+      - backend/.env
     environment:
       DATABASE_URL: postgresql://user:password@postgres:5432/globewallet
       REDIS_URL: redis://redis:6379
