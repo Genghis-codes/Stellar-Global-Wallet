@@ -5,6 +5,12 @@ import { UnauthorizedError } from "../errors/appError";
 
 export function jwtAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.header("Authorization");
+  // No credential at all: tell the client to sign in. A legacy x-api-key
+  // (#40) or a non-Bearer header is a malformed credential instead.
+  if (!header && !req.header("x-api-key")) {
+    next(new UnauthorizedError("Authentication required", "TOKEN_MISSING"));
+    return;
+  }
   if (!header?.startsWith("Bearer ")) {
     next(
       new UnauthorizedError(

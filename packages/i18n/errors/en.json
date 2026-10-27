@@ -79,6 +79,7 @@
   "AUTH_TOKEN_INVALID": "Your session isn't valid. Please sign in again.",
   "AUTH_TOKEN_TYPE_INVALID": "Your session isn't valid. Please sign in again.",
   "TOKEN_EXPIRED": "Your session has expired.",
+  "TOKEN_MISSING": "Please sign in to continue.",
   "REFRESH_TOKEN_INVALID": "Your session has expired. Please sign in again.",
   "LOGIN_RATE_LIMITED": "Too many sign-in attempts. Wait a minute and try again.",
   "SEP10_NOT_CONFIGURED": "Wallet sign-in isn't available on this server.",
