@@ -30,7 +30,7 @@
   "scripts": {
     "build": "tsc",
     "type-check": "tsc --noEmit",
-    "test": "node --test --import tsx tests/validate.test.ts tests/format.test.ts tests/lookalike.test.ts",
+    "test": "node --test --import tsx tests/validate.test.ts tests/format.test.ts tests/lookalike.test.ts tests/client.test.ts",
     "test:smoke": "node --test --import tsx tests/smoke/preview-api.test.ts"
   },
   "dependencies": {
