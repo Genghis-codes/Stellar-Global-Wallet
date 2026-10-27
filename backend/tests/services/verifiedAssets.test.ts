@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import express from "express";
+import request from "supertest";
 import { parseVerifiedAssetFile } from "../../src/services/verifiedAssets";
+import { createAssetsRouter } from "../../src/routes/assets";
 
 const USDC = {
   code: "USDC",
@@ -40,5 +43,19 @@ describe("verified asset files (#54)", () => {
     ],
   ])("rejects %s", (_label, raw) => {
     expect(() => parseVerifiedAssetFile(raw, "mainnet")).toThrow();
+  });
+});
+
+describe("GET /api/v1/assets/verified", () => {
+  it("serves the reviewed list without internal pricing fields", async () => {
+    const app = express();
+    app.use(
+      "/api/v1/assets",
+      createAssetsRouter(undefined, undefined, () => [{ ...USDC, coingeckoId: "usd-coin", usdPeg: true }])
+    );
+    const res = await request(app).get("/api/v1/assets/verified");
+    expect(res.status).toBe(200);
+    expect(res.headers["cache-control"]).toBe("public, max-age=300");
+    expect(res.body.assets).toEqual([USDC]);
   });
 });

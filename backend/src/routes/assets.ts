@@ -9,6 +9,8 @@ import {
   MAX_SEARCH_LIMIT,
 } from "../services/assetSearch";
 import { isValidPublicHostname } from "../services/safeHttpsFetch";
+import { VerifiedAsset, getVerifiedAssets } from "../services/verifiedAssets";
+import { config } from "../config";
 import { isGAddress, publicKeyMessage } from "../utils/stellarAddress";
 
 const ASSET_CODE_PATTERN = /^[A-Za-z0-9]{1,12}$/;
@@ -24,9 +26,20 @@ const CURSOR_PATTERN = /^[A-Za-z0-9_:-]{1,128}$/;
  */
 export function createAssetsRouter(
   search: AssetSearchService = new AssetSearchService(),
-  metadata: AssetMetadataService = new AssetMetadataService()
+  metadata: AssetMetadataService = new AssetMetadataService(),
+  verified: () => VerifiedAsset[] = getVerifiedAssets
 ): Router {
   const router = Router();
+
+  // #54 — the reviewed verified-asset list for this network, so apps can
+  // badge genuine assets and warn on lookalikes. Changes only on deploy.
+  router.get("/verified", (_req, res) => {
+    res.set("Cache-Control", "public, max-age=300");
+    res.json({
+      network: config.STELLAR_NETWORK,
+      assets: verified().map(({ code, issuer, domain, name }) => ({ code, issuer, domain, name })),
+    });
+  });
 
   // #53 — search by code (Horizon, paginated) or by domain (stellar.toml).
   router.get(
