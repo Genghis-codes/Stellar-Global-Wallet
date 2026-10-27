@@ -256,5 +256,31 @@ export function createAccountRouter(stellar: StellarService): Router {
     }
   );
 
+  // #79 — activity feed combining classic payments and Soroban contract
+  // events, ordered newest first with a composite cursor.
+  accountRouter.get(
+    "/:publicKey/activity",
+    param("publicKey").custom(isGAddress).withMessage(publicKeyMessage),
+    query("limit")
+      .optional()
+      .isInt({ min: 1, max: MAX_PAGE_LIMIT })
+      .withMessage("limit must be an integer between 1 and 100")
+      .toInt(),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const result = await getUnifiedActivityFeed({
+          stellar,
+          publicKey: req.params.publicKey,
+          limit: (req.query.limit as number | undefined) ?? DEFAULT_PAGE_LIMIT,
+          cursor: req.query.cursor as string | undefined,
+        });
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
   return accountRouter;
 }
