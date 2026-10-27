@@ -14,7 +14,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 REPO_ROOT="$(cd "${CONTRACT_DIR}/.." && pwd)"
 
-WASM_PATH="${CONTRACT_DIR}/target/wasm32-unknown-unknown/release/globe_wallet.wasm"
+# Stellar CLI >= 25 builds for wasm32v1-none; older releases used
+# wasm32-unknown-unknown. Accept whichever the installed CLI produced.
+WASM_CANDIDATES=(
+  "${CONTRACT_DIR}/target/wasm32v1-none/release/globe_wallet.wasm"
+  "${CONTRACT_DIR}/target/wasm32-unknown-unknown/release/globe_wallet.wasm"
+)
 OUTPUT_DIR="${REPO_ROOT}/packages/bindings/globe-wallet"
 
 if ! command -v stellar >/dev/null 2>&1; then
@@ -28,8 +33,16 @@ echo "==> Building globe-wallet contract wasm"
   stellar contract build
 )
 
-if [[ ! -f "${WASM_PATH}" ]]; then
-  echo "error: expected wasm at ${WASM_PATH} but it was not produced by 'stellar contract build'" >&2
+WASM_PATH=""
+for candidate in "${WASM_CANDIDATES[@]}"; do
+  if [[ -f "${candidate}" ]]; then
+    WASM_PATH="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${WASM_PATH}" ]]; then
+  echo "error: globe_wallet.wasm was not produced by 'stellar contract build' (looked in: ${WASM_CANDIDATES[*]})" >&2
   exit 1
 fi
 
