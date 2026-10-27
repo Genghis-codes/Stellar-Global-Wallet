@@ -27,9 +27,10 @@ services:
     runtime: node
     plan: free
     region: oregon
-    rootDir: backend
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    # Build from the repo root: the backend is an npm workspace and imports
+    # the SDK and contract bindings from packages/, built first.
+    buildCommand: npm ci && npm run build:packages && npm run build --workspace backend
+    startCommand: node backend/dist/index.js
     autoDeployTrigger: commit
     branch: main
     healthCheckPath: /health
@@ -37,6 +38,10 @@ services:
       # Testnet config (#110's "testnet config") — matches backend/.env.example.
       - key: NODE_ENV
         value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: STELLAR_NETWORK
+        value: testnet
       - key: HORIZON_URL
         value: https://horizon-testnet.stellar.org
       - key: NETWORK_PASSPHRASE
