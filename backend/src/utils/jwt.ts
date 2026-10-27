@@ -15,6 +15,8 @@ interface RefreshRecord {
   sub: string;
   revoked: boolean;
   sessionId: string;
+  /** Carried across rotations so refreshed access tokens keep auth_method. */
+  authMethod?: AuthMethod;
 }
 
 /**
@@ -25,6 +27,8 @@ interface RefreshRecord {
 export interface SessionMetadata {
   userAgent?: string;
   ipHash?: string;
+  /** How the session was established; set when the session is created. */
+  authMethod?: AuthMethod;
 }
 
 /**
@@ -112,7 +116,7 @@ export class RedisRefreshTokenStore {
     const sessionId = randomUUID();
     const token = randomUUID();
     const now = new Date().toISOString();
-    const record: RefreshRecord = { sub, revoked: false, sessionId };
+    const record: RefreshRecord = { sub, revoked: false, sessionId, authMethod: metadata.authMethod };
     const session: SessionInfo = {
       id: sessionId,
       userAgent: metadata.userAgent ?? null,
@@ -142,7 +146,7 @@ export class RedisRefreshTokenStore {
   async rotate(
     oldToken: string,
     metadata: SessionMetadata = {}
-  ): Promise<{ sub: string; token: string; sessionId: string } | null> {
+  ): Promise<{ sub: string; token: string; sessionId: string; authMethod?: AuthMethod } | null> {
     await this.ensureConnected();
     const raw = await this.client.get(this.key(oldToken));
     if (!raw) return null;
@@ -162,6 +166,7 @@ export class RedisRefreshTokenStore {
       sub: record.sub,
       revoked: false,
       sessionId: record.sessionId,
+      authMethod: record.authMethod,
     };
     await this.client.set(this.key(token), JSON.stringify(nextRecord), {
       PX: REFRESH_EXPIRY_MS,
@@ -178,7 +183,7 @@ export class RedisRefreshTokenStore {
       PX: REFRESH_EXPIRY_MS,
     });
 
-    return { sub: record.sub, token, sessionId: record.sessionId };
+    return { sub: record.sub, token, sessionId: record.sessionId, authMethod: record.authMethod };
   }
 
   async revoke(token: string): Promise<void> {
