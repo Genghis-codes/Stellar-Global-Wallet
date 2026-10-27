@@ -240,7 +240,12 @@ export function createApp(
   // #34 — cookie session mode needs credentialed CORS. `credentials: true`
   // is incompatible with a wildcard origin, so the explicit allow-list from
   // CORS_ORIGIN is required (never `*`). Bearer-token clients are unaffected.
-  const corsOrigins = config.CORS_ORIGIN.split(",").map((o) => o.trim()).filter(Boolean);
+  // config.CORS_ORIGIN is already split, trimmed and URL-checked (#41).
+  // CORS_ORIGIN_REGEX, when set, additionally admits preview deploys.
+  const corsOrigins: (string | RegExp)[] = [...config.CORS_ORIGIN];
+  if (config.CORS_ORIGIN_REGEX) {
+    corsOrigins.push(config.CORS_ORIGIN_REGEX);
+  }
   app.use(cors({ origin: corsOrigins, credentials: true }));
   app.use(morgan("combined"));
 
