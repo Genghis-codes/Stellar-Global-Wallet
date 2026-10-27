@@ -98,12 +98,17 @@ describe("StellarService.sendPayment concurrency (issue #3)", () => {
         return fakeAccountResponse(publicKey, "100");
       });
 
+    let inFlight = 0;
+    let maxInFlight = 0;
     jest
       .spyOn(StellarSdk.Horizon.Server.prototype, "submitTransaction")
       .mockImplementation(async () => {
         // Account 1's submission is slow; account 2's should not have to
         // wait for it — they don't share a source account.
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
         await sleep(50);
+        inFlight -= 1;
         return { hash: "hash", successful: true } as unknown as StellarSdk.Horizon.HorizonApi.SubmitTransactionResponse;
       });
 
@@ -112,7 +117,6 @@ describe("StellarService.sendPayment concurrency (issue #3)", () => {
     const keypair2 = StellarSdk.Keypair.random();
     const destination = StellarSdk.Keypair.random().publicKey();
 
-    const start = Date.now();
     await Promise.all([
       stellar.sendPayment({
         sourceSecretKey: keypair1.secret(),
@@ -125,11 +129,10 @@ describe("StellarService.sendPayment concurrency (issue #3)", () => {
         amount: "1",
       }),
     ]);
-    const elapsedMs = Date.now() - start;
-
-    // If these were incorrectly serialized against a shared/global lock,
-    // this would take ~100ms (two sequential 50ms submits) instead of ~50ms.
-    expect(elapsedMs).toBeLessThan(90);
+    // A shared/global lock would run the two submits one after another.
+    // Checking overlap instead of wall-clock time keeps this stable on a
+    // busy CI runner.
+    expect(maxInFlight).toBe(2);
   });
 
   it("translates a Horizon tx_bad_seq rejection into a clear, actionable SequenceConflictError", async () => {

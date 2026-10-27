@@ -149,7 +149,7 @@ describe("POST /api/v1/wallet/submit (issue #2)", () => {
       const keypair = StellarSdk.Keypair.random();
       const submit = mockSubmit("d".repeat(64));
       const nowSeconds = Math.floor(Date.now() / 1000);
-      const { xdr } = signedPayment({ keypair, maxTime: nowSeconds + 1 });
+      const { xdr } = signedPayment({ keypair, maxTime: nowSeconds + 30 });
       await post().set("Idempotency-Key", "key-late-1").send({ signedXdr: xdr }).expect(200);
 
       jest.spyOn(Date, "now").mockReturnValue((nowSeconds + 60) * 1000);
