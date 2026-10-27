@@ -238,19 +238,17 @@ export function createAccountRouter(stellar: StellarService): Router {
           cursor: req.query.cursor,
           limit: req.query.limit,
         });
-        const feed = await getUnifiedActivityFeed({
-          stellar,
-          publicKey: req.params.publicKey,
+        const result = await stellar.getPaymentHistory(req.params.publicKey, {
           limit: limit ?? DEFAULT_PAGE_LIMIT,
           cursor,
         });
-        const page = paginate(feed.items, feed.next);
+        const page = paginate(result.payments, result.next);
         res.json({
           ...page,
           // @deprecated — use `items` + `nextCursor`. Kept for one version.
           payments: page.items,
-          next: feed.next,
-          hasMore: feed.hasMore,
+          next: result.next,
+          hasMore: result.hasMore,
         });
       } catch (err) {
         next(err);
