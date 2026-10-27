@@ -1,0 +1,82 @@
+# Scans every pull request for malware and malicious or vulnerable
+# dependencies before it can be merged. Runs on `pull_request` (not
+# `pull_request_target`), so code from forks never sees repo secrets.
+name: PR Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-security-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Malicious & vulnerable dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Fails if the PR adds a package with a GitHub advisory, including
+      # malware advisories (packages known to be malicious).
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
+
+  lockfile:
+    name: Lockfile integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # Every package must come from the npm registry over HTTPS, so a PR
+      # can't swap a dependency for a tarball on someone else's server.
+      - name: Check lockfile sources
+        run: npx --yes lockfile-lint@4 --path package-lock.json --type npm --allowed-hosts npm --validate-https --validate-integrity
+
+      - name: Install without running install scripts
+        run: npm ci --ignore-scripts
+
+      # Verifies registry signatures and provenance for installed packages.
+      - name: Verify package signatures
+        run: npm audit signatures
+
+  malware-scan:
+    name: ClamAV scan of changed files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install ClamAV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clamav
+          sudo systemctl stop clamav-freshclam || true
+          sudo freshclam
+
+      - name: Scan files changed in this PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" > changed.txt
+          echo "Changed files: $(wc -l < changed.txt)"
+          if [ ! -s changed.txt ]; then
+            echo "No added or modified files to scan."
+            exit 0
+          fi
+          # Exit code 1 means a virus was found; the job fails.
+          clamscan --infected --file-list=changed.txt
