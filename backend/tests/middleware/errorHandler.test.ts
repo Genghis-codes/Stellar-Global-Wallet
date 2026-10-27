@@ -23,9 +23,11 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(409);
     expect(res.json).toHaveBeenCalledWith({
-      error: "sequence changed, safe to retry",
-      code: "SEQUENCE_CONFLICT",
-      retryable: true,
+      error: {
+        message: "sequence changed, safe to retry",
+        code: "SEQUENCE_CONFLICT",
+        retryable: true,
+      },
     });
   });
 
@@ -37,9 +39,11 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith({
-      error: "timed out waiting for lock",
-      code: "LOCK_TIMEOUT",
-      retryable: true,
+      error: {
+        message: "timed out waiting for lock",
+        code: "LOCK_TIMEOUT",
+        retryable: true,
+      },
     });
   });
 
@@ -51,9 +55,11 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({
-      error: "destination requires a memo",
-      code: "MEMO_REQUIRED",
-      retryable: false,
+      error: {
+        message: "destination requires a memo",
+        code: "MEMO_REQUIRED",
+        retryable: false,
+      },
     });
   });
 
@@ -65,9 +71,11 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(503);
     expect(res.json).toHaveBeenCalledWith({
-      error: "Soroban contract integration is not configured (missing contract ID)",
-      code: "SOROBAN_NOT_CONFIGURED",
-      retryable: false,
+      error: {
+        message: "Soroban contract integration is not configured (missing contract ID)",
+        code: "SOROBAN_NOT_CONFIGURED",
+        retryable: false,
+      },
     });
   });
 
@@ -79,9 +87,11 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(422);
     expect(res.json).toHaveBeenCalledWith({
-      error: "simulation failed: host invocation error",
-      code: "SOROBAN_SIMULATION_FAILED",
-      retryable: false,
+      error: {
+        message: "simulation failed: host invocation error",
+        code: "SOROBAN_SIMULATION_FAILED",
+        retryable: false,
+      },
     });
   });
 
@@ -93,10 +103,12 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(422);
     expect(res.json).toHaveBeenCalledWith({
-      error: "simulation failed",
-      code: "SOROBAN_SIMULATION_FAILED",
-      retryable: false,
-      details: { raw: "raw diagnostic event dump" },
+      error: {
+        message: "simulation failed",
+        code: "SOROBAN_SIMULATION_FAILED",
+        retryable: false,
+        details: { raw: "raw diagnostic event dump" },
+      },
     });
   });
 
@@ -108,11 +120,13 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(502);
     expect(res.json).toHaveBeenCalledWith({
-      error: "transaction failed on-chain",
-      code: "SOROBAN_TX_FAILED",
-      retryable: false,
-      details: { hash: "soroban-tx-hash-123" },
-      hash: "soroban-tx-hash-123",
+      error: {
+        message: "transaction failed on-chain",
+        code: "SOROBAN_TX_FAILED",
+        retryable: false,
+        details: { hash: "soroban-tx-hash-123" },
+        hash: "soroban-tx-hash-123",
+      },
     });
   });
 
@@ -133,8 +147,10 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(413);
     expect(res.json).toHaveBeenCalledWith({
-      error: "Request body exceeds the configured size limit",
-      code: "PAYLOAD_TOO_LARGE",
+      error: {
+        message: "Request body exceeds the configured size limit",
+        code: "PAYLOAD_TOO_LARGE",
+      },
     });
   });
 
@@ -144,8 +160,10 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({
-      error: "something else broke",
-      code: "INTERNAL_ERROR",
+      error: {
+        message: "something else broke",
+        code: "INTERNAL_ERROR",
+      },
     });
   });
 
@@ -155,8 +173,10 @@ describe("errorHandler", () => {
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({
-      error: "Not Found",
-      code: "INTERNAL_ERROR",
+      error: {
+        message: "Not Found",
+        code: "INTERNAL_ERROR",
+      },
     });
   });
 });
