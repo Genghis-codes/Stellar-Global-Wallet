@@ -18,9 +18,6 @@ permissions:
 jobs:
   e2e-testnet:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
     # Testnet is occasionally flaky; the suite already retries Friendbot
     # funding/account loads itself, so a job-level retry would only mask a
     # real regression. One attempt, clearly reported.
@@ -33,15 +30,20 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-          cache-dependency-path: backend/package-lock.json
 
       - name: Install dependencies
+        # The backend is an npm workspace; install from the root lock file.
         run: npm ci
 
+      - name: Build workspace packages the backend imports
+        run: |
+          npm run build --workspace packages/bindings/globe-wallet
+          npm run build --workspace packages/sdk
+
       - name: Run testnet e2e suite
-        run: npm run test:e2e -- --verbose
+        run: npm run test:e2e --workspace backend -- --verbose
         env:
           E2E_TESTNET: "1"
 
