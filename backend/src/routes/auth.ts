@@ -156,6 +156,12 @@ authRouter.post(
         auth_method: "sep10",
       });
     } catch (err) {
+      // A forged, expired, wrong-network or under-signed challenge is the
+      // client's problem (401), not a server failure.
+      if (err instanceof WebAuth.InvalidChallengeError) {
+        next(new UnauthorizedError(err.message, "SEP10_CHALLENGE_INVALID"));
+        return;
+      }
       next(err);
     }
   }
@@ -175,7 +181,13 @@ async function loadAccountSigners(account: string): Promise<AccountSigners | nul
     return null;
   }
   if (!response.ok) {
-    throw new UnauthorizedError("Unable to load account signers", "SIGNER_LOOKUP_FAILED");
+    // Horizon being unavailable is not the caller's fault: report it as an
+    // upstream failure the client may retry, not as a 401.
+    throw new AppError("Unable to load account signers", {
+      code: "SIGNER_LOOKUP_FAILED",
+      status: 502,
+      retryable: true,
+    });
   }
   const data = (await response.json()) as {
     thresholds?: { med_threshold?: number };
