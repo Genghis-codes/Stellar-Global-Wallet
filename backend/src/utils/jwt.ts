@@ -148,7 +148,10 @@ export class RedisRefreshTokenStore {
     metadata: SessionMetadata = {}
   ): Promise<{ sub: string; token: string; sessionId: string; authMethod?: AuthMethod } | null> {
     await this.ensureConnected();
-    const raw = await this.client.get(this.key(oldToken));
+    // GETDEL consumes the token atomically: two concurrent refreshes with
+    // the same token can no longer both read it before either deletes it,
+    // which would mint two live sessions from one (possibly stolen) token.
+    const raw = await this.client.getDel(this.key(oldToken));
     if (!raw) return null;
     const record = JSON.parse(raw) as RefreshRecord;
     if (record.revoked) return null;
@@ -157,8 +160,6 @@ export class RedisRefreshTokenStore {
     // able to rotate even if a stale refresh token still exists.
     const sessionRaw = await this.client.get(this.sessionKey(record.sessionId));
     if (!sessionRaw) return null;
-
-    await this.client.del(this.key(oldToken));
 
     const token = randomUUID();
     const now = new Date().toISOString();
