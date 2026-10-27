@@ -28,23 +28,28 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install workspace dependencies
-        run: npm install
+        run: npm ci
 
-      - name: Lint
-        run: npm run lint --workspaces --if-present
+      # The backend is also a workspace (it has its own Backend CI), so name
+      # the publishable packages explicitly, in dependency order: the SDK
+      # imports the generated bindings' dist/ output.
+      - name: Build
+        run: |
+          npm run build --workspace packages/bindings/globe-wallet
+          npm run build --workspace packages/sdk
 
       - name: Type-check
-        run: npm run type-check --workspaces --if-present
+        run: |
+          npm run type-check --workspace packages/types --if-present
+          npm run type-check --workspace packages/fixtures --if-present
+          npm run type-check --workspace packages/sdk
 
       - name: Test
-        run: npm test --workspaces --if-present
-
-      - name: Build
-        run: npm run build --workspaces --if-present
+        run: npm test --workspace packages/sdk
 
       - name: Check i18n catalogue completeness
         run: npm run i18n:check --workspace=packages/i18n
