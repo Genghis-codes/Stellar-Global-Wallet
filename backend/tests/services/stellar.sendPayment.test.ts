@@ -1,6 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { StellarService } from "../../src/services/stellar";
-import { SequenceConflictError } from "../../src/services/stellarErrors";
+import { NonRetryableHorizonError, SequenceConflictError } from "../../src/services/stellarErrors";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -26,10 +26,16 @@ describe("StellarService.sendPayment concurrency (issue #3)", () => {
     async () => {
       const events: string[] = [];
       let sequence = 100;
+      // sendPayment also loads each destination (SEP-29 memo check); only
+      // source-account reads matter for the sequence-number race.
+      const sourceKeypair = StellarSdk.Keypair.random();
 
       jest
         .spyOn(StellarSdk.Horizon.Server.prototype, "loadAccount")
         .mockImplementation(async (publicKey: string) => {
+          if (publicKey !== sourceKeypair.publicKey()) {
+            return fakeAccountResponse(publicKey, "1");
+          }
           events.push(`loadAccount:start`);
           // Yields to the event loop — if nothing is serializing calls for
           // this account, the second send's loadAccount fires in this
@@ -52,7 +58,6 @@ describe("StellarService.sendPayment concurrency (issue #3)", () => {
         });
 
       const stellar = new StellarService();
-      const sourceKeypair = StellarSdk.Keypair.random();
       const destinationA = StellarSdk.Keypair.random().publicKey();
       const destinationB = StellarSdk.Keypair.random().publicKey();
 
@@ -191,6 +196,7 @@ describe("StellarService.sendPayment concurrency (issue #3)", () => {
     });
 
     await expect(promise).rejects.not.toBeInstanceOf(SequenceConflictError);
-    await expect(promise).rejects.toBeInstanceOf(StellarSdk.BadResponseError);
+    // Deterministic Horizon rejections are classified, not retried.
+    await expect(promise).rejects.toBeInstanceOf(NonRetryableHorizonError);
   });
 });
