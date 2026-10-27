@@ -27,7 +27,7 @@ describe("POST /api/v1/auth/login rate limiting (issue #91)", () => {
       .set("x-api-key", "wrong-guess-final")
       .set("X-Forwarded-For", ip);
     expect(blocked.status).toBe(429);
-    expect(blocked.body.code).toBe("LOGIN_RATE_LIMITED");
+    expect(blocked.body.error.code).toBe("LOGIN_RATE_LIMITED");
   });
 
   it("also rate-limits a caller guessing the correct key eventually, once over budget", async () => {

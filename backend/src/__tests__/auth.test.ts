@@ -71,8 +71,8 @@ describe("POST /api/v1/auth/login", () => {
     const res = await request(app)
       .post("/api/v1/auth/login")
       .expect(401);
-    expect(res.body.error).toBe("Unauthorized");
-    expect(res.body.code).toBe("API_KEY_UNAUTHORIZED");
+    expect(res.body.error.message).toBe("Unauthorized");
+    expect(res.body.error.code).toBe("API_KEY_UNAUTHORIZED");
   });
 
   it("rejects wrong API key", async () => {
@@ -80,8 +80,8 @@ describe("POST /api/v1/auth/login", () => {
       .post("/api/v1/auth/login")
       .set("x-api-key", "wrong-key")
       .expect(401);
-    expect(res.body.error).toBe("Unauthorized");
-    expect(res.body.code).toBe("API_KEY_UNAUTHORIZED");
+    expect(res.body.error.message).toBe("Unauthorized");
+    expect(res.body.error.code).toBe("API_KEY_UNAUTHORIZED");
   });
 });
 
@@ -161,7 +161,7 @@ describe("POST /api/v1/auth/refresh", () => {
       .send({ refreshToken })
       .expect(401)
       .expect(({ body }) => {
-        expect(body.code).toBe("REFRESH_TOKEN_INVALID");
+        expect(body.error.code).toBe("REFRESH_TOKEN_INVALID");
       });
   });
 
@@ -170,8 +170,8 @@ describe("POST /api/v1/auth/refresh", () => {
       .post("/api/v1/auth/refresh")
       .send({})
       .expect(400);
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(Array.isArray(res.body.details)).toBe(true);
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(Array.isArray(res.body.error.details)).toBe(true);
   });
 
   it("rotates cookies in cookie mode using the refresh cookie", async () => {
@@ -271,7 +271,7 @@ describe("GET /api/v1/auth/me", () => {
     const res = await request(app)
       .get("/api/v1/auth/me")
       .expect(401);
-    expect(res.body.code).toBe("TOKEN_MISSING");
+    expect(res.body.error.code).toBe("TOKEN_MISSING");
   });
 
   it("returns 401 TOKEN_EXPIRED for an expired token", async () => {
@@ -287,7 +287,7 @@ describe("GET /api/v1/auth/me", () => {
       .get("/api/v1/auth/me")
       .set("Authorization", `Bearer ${expired}`)
       .expect(401);
-    expect(res.body.code).toBe("TOKEN_EXPIRED");
+    expect(res.body.error.code).toBe("TOKEN_EXPIRED");
   });
 });
 
@@ -296,7 +296,7 @@ describe("wallet routes with JWT", () => {
     const res = await request(app)
       .get("/api/v1/wallet/balances")
       .expect(401);
-    expect(res.body.code).toBe("TOKEN_MISSING");
+    expect(res.body.error.code).toBe("TOKEN_MISSING");
   });
 });
 
@@ -307,7 +307,7 @@ describe("x-api-key is no longer accepted on protected routes (#40)", () => {
       .set("x-api-key", "test-api-key")
       .send({});
     expect(res.status).toBe(401);
-    expect(res.body.code).toBe("AUTH_HEADER_INVALID");
+    expect(res.body.error.code).toBe("AUTH_HEADER_INVALID");
   });
 
   it("rejects x-api-key on /wallet/keypair with 401", async () => {
@@ -315,7 +315,7 @@ describe("x-api-key is no longer accepted on protected routes (#40)", () => {
       .post("/api/v1/wallet/keypair")
       .set("x-api-key", "test-api-key");
     expect(res.status).toBe(401);
-    expect(res.body.code).toBe("AUTH_HEADER_INVALID");
+    expect(res.body.error.code).toBe("AUTH_HEADER_INVALID");
   });
 });
 
@@ -339,7 +339,7 @@ describe("recovery execution revokes old-account sessions (#38)", () => {
       .send({ refreshToken })
       .expect(401)
       .expect(({ body }) => {
-        expect(body.code).toBe("REFRESH_TOKEN_INVALID");
+        expect(body.error.code).toBe("REFRESH_TOKEN_INVALID");
       });
 
     // New owner is notified (side effect of the recovery handler).

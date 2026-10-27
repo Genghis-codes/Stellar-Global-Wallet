@@ -41,8 +41,8 @@ describe('consistent error envelope', () => {
     expect(res.body).toEqual({ ok: true });
   });
 
-    expect(res.body.code).toBe("ACCOUNT_NOT_FOUND");
-    expect(res.body.error).toBe("Account GTEST was not found on Horizon");
+    expect(res.body.error.code).toBe("ACCOUNT_NOT_FOUND");
+    expect(res.body.error.message).toBe("Account GTEST was not found on Horizon");
     expect(res).toSatisfyApiSpec();
   });
 
@@ -69,8 +69,8 @@ describe('consistent error envelope', () => {
     expectEnvelope(res.body);
   });
 
-    expect(res.body.code).toBe("INTERNAL_ERROR");
-    expect(res.body.error).toBe("Validation failed because field does not exist in payload");
+    expect(res.body.error.code).toBe("INTERNAL_ERROR");
+    expect(res.body.error.message).toBe("Validation failed because field does not exist in payload");
     expect(res).toSatisfyApiSpec();
   });
 
@@ -86,8 +86,8 @@ describe('consistent error envelope', () => {
       .get(`/api/v1/account/${"M".repeat(56)}`)
       .expect(400);
 
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("publicKey");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("publicKey");
     expect(res).toSatisfyApiSpec();
   });
 });
