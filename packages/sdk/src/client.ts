@@ -55,7 +55,7 @@ export class ApiError extends Error {
   }
 }
 
-export interface ClientOptions {
+export interface ApiClientOptions {
   baseUrl: string;
   tokenStore?: TokenStore;
   /** Called when the refresh token is expired/revoked. */
@@ -114,7 +114,7 @@ function parseRetryAfter(value: string | null): number | null {
   return null;
 }
 
-export class Client {
+export class ApiClient {
   private readonly baseUrl: string;
   private readonly tokenStore: TokenStore;
   private readonly onSessionExpired?: () => void;
@@ -125,7 +125,7 @@ export class Client {
   /** Shared in-flight refresh promise (single-flight). */
   private refreshPromise: Promise<string> | null = null;
 
-  constructor(options: ClientOptions) {
+  constructor(options: ApiClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, '');
     this.tokenStore = options.tokenStore ?? new InMemoryTokenStore();
     this.onSessionExpired = options.onSessionExpired;
@@ -250,4 +250,9 @@ export class Client {
       return text;
     }
   }
+}
+
+/** Create an `ApiClient` for the GlobeWallet REST API. */
+export function createClient(options: ApiClientOptions): ApiClient {
+  return new ApiClient(options);
 }

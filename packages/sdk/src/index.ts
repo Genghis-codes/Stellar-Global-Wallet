@@ -90,11 +90,16 @@ export * from "./format/index.js";
 export * from "./security/index.js";
 
 /**
- * Typed HTTP client for the backend REST API (#18), generated from
- * `backend/openapi.yaml` via `openapi-typescript` and transported with
- * `openapi-fetch`. Use `createClient({ baseUrl, getToken, onSessionExpired })`
- * to get a fully typed client that injects the auth header and normalises
- * the backend error envelope. Works in Node 20, browsers and React Native
- * (no Node-only APIs in the runtime path).
+ * HTTP client for the backend REST API (#18): injects the bearer token,
+ * refreshes it single-flight on TOKEN_EXPIRED, and retries 429/503 with
+ * backoff. Named `ApiClient` because the contract bindings above already
+ * export a `Client`. Works in Node 20, browsers and React Native.
  */
-export * from "./client/index.js";
+export {
+  ApiClient,
+  ApiError,
+  InMemoryTokenStore,
+  SessionExpiredError,
+  createClient,
+} from "./client.js";
+export type { ApiClientOptions, RequestOptions, TokenStore } from "./client.js";
