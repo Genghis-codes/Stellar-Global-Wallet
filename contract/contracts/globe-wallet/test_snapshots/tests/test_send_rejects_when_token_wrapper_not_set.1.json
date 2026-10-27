@@ -198,6 +198,22 @@
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                         }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "AllowedTokens"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "vec": [
+                            {
+                              "address": "CACMVW2KK4H5FZDFF2AUCAKQTEJMZZWJUIZF23XMRVYQBSXYLHZ6BKWN"
+                            }
+                          ]
+                        }
                       }
                     ]
                   }
@@ -206,7 +222,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ],
       [
@@ -372,7 +388,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ]
     ]
@@ -701,7 +717,7 @@
             ],
             "data": {
               "error": {
-                "contract": 32
+                "contract": 1035
               }
             }
           }
@@ -722,7 +738,7 @@
               },
               {
                 "error": {
-                  "contract": 32
+                  "contract": 1035
                 }
               }
             ],
@@ -747,7 +763,7 @@
               },
               {
                 "error": {
-                  "contract": 32
+                  "contract": 1035
                 }
               }
             ],

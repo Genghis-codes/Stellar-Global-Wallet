@@ -261,6 +261,22 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "AllowedTokens"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "vec": [
+                            {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+                            }
+                          ]
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "TokenWrapperId"
                             }
                           ]
@@ -276,7 +292,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ],
       [
@@ -589,7 +605,7 @@
             },
             "ext": "v0"
           },
-          4095
+          518400
         ]
       ]
     ]
@@ -1525,7 +1541,7 @@
             ],
             "data": {
               "error": {
-                "contract": 33
+                "contract": 1036
               }
             }
           }
@@ -1546,7 +1562,7 @@
               },
               {
                 "error": {
-                  "contract": 33
+                  "contract": 1036
                 }
               }
             ],
@@ -1571,7 +1587,7 @@
               },
               {
                 "error": {
-                  "contract": 33
+                  "contract": 1036
                 }
               }
             ],
