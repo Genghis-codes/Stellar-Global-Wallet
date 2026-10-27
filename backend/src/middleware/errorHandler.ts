@@ -102,11 +102,13 @@ function toErrorBody(error: AppError, requestId?: string) {
 }
 
 function resolveRequestId(req: Request, res: Response): string | undefined {
-  const fromResponse = res.getHeader("x-request-id");
+  const fromResponse =
+    typeof res.getHeader === "function" ? res.getHeader("x-request-id") : undefined;
   if (typeof fromResponse === "string" && fromResponse.length > 0) {
     return fromResponse;
   }
-  const fromRequest = req.header("x-request-id");
+  const fromRequest =
+    typeof req.header === "function" ? req.header("x-request-id") : undefined;
   return fromRequest && fromRequest.length > 0 ? fromRequest : undefined;
 }
 
