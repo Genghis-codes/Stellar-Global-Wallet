@@ -65,9 +65,9 @@ describe("GET /api/v1/wallet/:publicKey/thresholds", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .expect(400);
 
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("publicKey");
-    expect(res.body.details[0].message).toContain("Muxed");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("publicKey");
+    expect(res.body.error.details[0].message).toContain("Muxed");
   });
 
   it("rejects a malformed public key with 400 validation error", async () => {
@@ -76,7 +76,7 @@ describe("GET /api/v1/wallet/:publicKey/thresholds", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .expect(400);
 
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("publicKey");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("publicKey");
   });
 });

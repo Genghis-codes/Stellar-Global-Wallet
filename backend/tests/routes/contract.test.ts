@@ -47,7 +47,7 @@ describe("GET /api/v1/contract/wallet/:publicKey/assets", () => {
     const res = await request(app)
       .get(`/api/v1/contract/wallet/${VALID_PUBLIC_KEY}/assets`)
       .expect(503);
-    expect(res.body.code).toBe("SOROBAN_NOT_CONFIGURED");
+    expect(res.body.error.code).toBe("SOROBAN_NOT_CONFIGURED");
   });
 });
 
@@ -95,7 +95,7 @@ describe("POST /api/v1/contract/wallet/spend", () => {
         .send({ userSecretKey: "S".repeat(56), assetCode: "XLM", amount: "999999999" })
         .expect(422);
 
-      expect(res.body.code).toBe("SOROBAN_SIMULATION_FAILED");
+      expect(res.body.error.code).toBe("SOROBAN_SIMULATION_FAILED");
     }
   );
 

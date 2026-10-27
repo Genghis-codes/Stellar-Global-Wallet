@@ -67,8 +67,8 @@ describe.each([
       .send(createBody(Array(8).fill(issuedAsset)))
       .expect(400);
 
-    expect(response.body.code).toBe("VALIDATION_ERROR");
-    expect(response.body.details).toContainEqual(
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(response.body.error.details).toContainEqual(
       expect.objectContaining({
         path: "path",
         message: "Path must contain at most 5 assets",
@@ -85,8 +85,8 @@ describe.each([
       .send(createBody(["USDC-without-an-issuer"]))
       .expect(400);
 
-    expect(response.body.code).toBe("VALIDATION_ERROR");
-    expect(response.body.details).toContainEqual(
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(response.body.error.details).toContainEqual(
       expect.objectContaining({
         path: "path",
         message: "Each path asset must use the CODE:ISSUER format",
