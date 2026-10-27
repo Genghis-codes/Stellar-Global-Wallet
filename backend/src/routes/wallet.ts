@@ -655,5 +655,19 @@ export function createWalletRouter(stellar: StellarService): Router {
     }
   );
 
+  // #88 — audit entries are tied to the authenticated caller (the JWT
+  // subject), not an x-api-key header that Bearer clients never send.
+  walletRouter.post("/keypair", async (req, res, next) => {
+    try {
+      const keypair = stellar.generateKeypair();
+      const publicKey = keypair.publicKey();
+      const secretKey = keypair.secret();
+      await logKeypairIssuance(req.user?.sub ?? "anonymous", publicKey);
+      res.json({ publicKey, secretKey });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   return walletRouter;
 }
