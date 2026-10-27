@@ -585,5 +585,49 @@ export function createWalletRouter(stellar: StellarService): Router {
     }
   );
 
+  walletRouter.post(
+    "/paths/strict-send",
+    body("sourceAmount").isDecimal({ decimal_digits: "0,7" }),
+    body("sourceAsset").optional().isString(),
+    body("destinationAsset").isString(),
+    body("destinationPublicKey")
+      .optional()
+      .isLength({ min: 56, max: 56 })
+      .bail()
+      .custom(isGAddress)
+      .withMessage(destinationMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const paths = await stellar.findStrictSendPaths(req.body);
+        res.json({ paths });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  walletRouter.post(
+    "/paths/strict-receive",
+    body("destinationAmount").isDecimal({ decimal_digits: "0,7" }),
+    body("destinationAsset").isString(),
+    body("sourceAsset").optional().isString(),
+    body("destinationPublicKey")
+      .optional()
+      .isLength({ min: 56, max: 56 })
+      .bail()
+      .custom(isGAddress)
+      .withMessage(destinationMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const paths = await stellar.findStrictReceivePaths(req.body);
+        res.json({ paths });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
   return walletRouter;
 }
