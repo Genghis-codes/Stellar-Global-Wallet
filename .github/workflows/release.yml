@@ -36,15 +36,15 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           registry-url: "https://registry.npmjs.org"
 
       - name: Install workspace dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build publishable packages
-        run: npm run build --workspaces --if-present
+        run: npm run build:packages
 
       - name: Dry-run publish (no tags, no npm writes)
         run: npx changeset publish --dry-run
@@ -61,15 +61,15 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           registry-url: "https://registry.npmjs.org"
 
       - name: Install workspace dependencies
-        run: npm install
+        run: npm ci
 
       - name: Build publishable packages
-        run: npm run build --workspaces --if-present
+        run: npm run build:packages
 
       - name: Create release PR or publish to npm
         uses: changesets/action@v1

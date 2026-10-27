@@ -10,7 +10,8 @@
   "scripts": {
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "npm run build --workspaces --if-present && changeset publish"
+    "release": "npm run build:packages && changeset publish",
+    "build:packages": "npm run build --workspace packages/bindings/globe-wallet && npm run build --workspace packages/sdk"
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.1"
