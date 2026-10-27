@@ -2,7 +2,7 @@
   "description": "Shared test vectors for issue #103 — run against both the SDK (packages/sdk/tests/validate.test.ts) and the backend (backend/src/__tests__/validation.test.ts) to prove they validate identically.",
   "addresses": [
     { "value": "GBLIQBXTAF3O3YINCRDR5O7H47QHHW5GFOYN4HAD6IKOSWD4LWKWWPHP", "valid": true, "note": "real demo account from backend/.env.example" },
-    { "value": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "valid": true, "note": "56 chars, starts with G" },
+    { "value": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "valid": true, "note": "56 chars, starts with G" },
     { "value": "MA7QYNF7SOWQ3GLR2BGMZEHXAVAVFVUEDFLVDPQEHLRWNA", "valid": false, "note": "muxed M-address, rejected on purpose" },
     { "value": "GSHORT", "valid": false, "note": "too short" },
     { "value": "", "valid": false, "note": "empty string" },
