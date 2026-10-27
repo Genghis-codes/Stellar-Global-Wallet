@@ -68,7 +68,7 @@ describe("StellarService.buildTrustlineTransaction (#9)", () => {
     });
     const transaction = new StellarSdk.Transaction(result.xdr, config.NETWORK_PASSPHRASE);
 
-    expect((transaction.operations[0] as StellarSdk.ChangeTrustOperation).limit).toBe("0");
+    expect((transaction.operations[0] as StellarSdk.ChangeTrustOperation).limit).toBe("0.0000000");
     expect(result.reserveDelta).toBe("-0.5");
     expect(result.spendableXlmAfter).toBe("0.9999900");
   });
