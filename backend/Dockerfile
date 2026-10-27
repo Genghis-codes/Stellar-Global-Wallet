@@ -31,6 +31,8 @@ RUN npm install --omit=dev
 COPY --from=build /app/backend/dist ./backend/dist
 # Curated verified-asset lists (#54), read at runtime from backend/data.
 COPY backend/data ./backend/data
+# Served at /api/openapi.json and /api/docs when ENABLE_API_DOCS=true (#16).
+COPY backend/openapi.yaml ./backend/openapi.yaml
 
 EXPOSE 4000
 CMD ["node", "backend/dist/index.js"]
