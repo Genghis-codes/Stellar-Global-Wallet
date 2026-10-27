@@ -32,7 +32,7 @@ const loginLimiter = rateLimit({
   handler: (_req, _res, next) => {
     next(
       new AppError("Too many login attempts, please try again later", {
-        code: "RATE_LIMITED",
+        code: "LOGIN_RATE_LIMITED",
         status: 429,
         retryable: true,
       })
