@@ -25,9 +25,23 @@ import {
   SubmitSignedResult,
   UnsignedTransactionInfo,
 } from "./transactionEnvelope";
-import type { TransactionSummary } from "@stellar-global-wallet/types";
+import type { TransactionDetail, TransactionSummary } from "@stellar-global-wallet/types";
 import { fromStroops, toStroops } from "../utils/stroops";
 import { isGAddress } from "../utils/stellarAddress";
+import { DEFAULT_SLIPPAGE_BPS, maxSendAfterSlippage, minReceiveAfterSlippage } from "../utils/slippage";
+import { assetKey, computePaymentFlags, parseVerifiedAssetsList, PaymentFlag } from "./paymentFlags";
+import {
+  explorerTxUrl,
+  HistoryFilters,
+  HistoryItem,
+  HistoryPage,
+  HorizonOperationLike,
+  HorizonTransactionLike,
+  mapOperationToHistoryItem,
+  scanHistory,
+  stroopsToXlm,
+} from "./transactionHistory";
+import { getVerifiedAssets } from "./verifiedAssets";
 
 // Re-exported for backward compatibility — this used to be declared locally
 // here. The canonical definition now lives in packages/types (issue #107)
@@ -361,7 +375,7 @@ export class StellarService {
     const dustThreshold = config.SPAM_DUST_THRESHOLD;
     // Curated list (#54) plus any per-deployment VERIFIED_ASSETS additions.
     const verifiedAssets = new Set([
-      ...verifiedAssetKeys(),
+      ...getVerifiedAssets().map((a) => assetKey(a.code, a.issuer)),
       ...parseVerifiedAssetsList(config.VERIFIED_ASSETS),
     ]);
 
@@ -566,7 +580,9 @@ export class StellarService {
     sourcePublicKey: string,
     sourceKeypair: StellarSdk.Keypair,
     methodName: string,
-    buildTransactionBuilder: (account: StellarSdk.Account) => StellarSdk.TransactionBuilder
+    buildTransactionBuilder: (
+      account: ConstructorParameters<typeof StellarSdk.TransactionBuilder>[0]
+    ) => StellarSdk.TransactionBuilder
   ) {
     return this.accountLock.withLock(sourcePublicKey, async () => {
       let lastAttemptError: unknown;
