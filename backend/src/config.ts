@@ -61,6 +61,7 @@ const corsOriginRegexSchema = z
   });
 
 const envSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().positive().default(4000),
   HORIZON_URL: z.string().url().default("https://horizon-testnet.stellar.org"),
   NETWORK_PASSPHRASE: z.string().min(1),
@@ -187,6 +188,24 @@ const envSchema = z.object({
   // the worker logs an alert because the retention gap means events were
   // permanently lost and a backfill from an archive source is required.
   INDEXER_RETENTION_GAP_LEDGERS: z.coerce.number().int().positive().default(120960),
+
+  // SEP-10 web authentication (GET /api/v1/auth/challenge, POST /token).
+  // SEP10_SIGNING_SECRET is the server's S... key that signs challenges;
+  // the SEP-10 routes answer 503 until it is set. HOME_DOMAIN and
+  // WEB_AUTH_DOMAIN must match what the wallet's stellar.toml advertises.
+  SEP10_SIGNING_SECRET: z
+    .string()
+    .regex(/^S[A-Z2-7]{55}$/, "must be a Stellar secret seed (S...)")
+    .optional(),
+  HOME_DOMAIN: z.string().min(1).default("globewallet.app"),
+  WEB_AUTH_DOMAIN: z.string().min(1).default("globewallet.app"),
+
+  // Fiat conversion for transaction history (see services/fx.ts and
+  // docs/transaction-history.md). Rates move slowly, so cache for an hour.
+  FX_API_URL: z.string().url().default("https://open.er-api.com/v6/latest/USD"),
+  FX_CACHE_TTL_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
+  // Upper bound on operations examined per filtered history page (#58).
+  HISTORY_SCAN_CAP: z.coerce.number().int().positive().max(10000).default(1000),
 
   // #16 — interactive API docs (Swagger UI at /api/docs, raw spec at
   // /api/openapi.json). Defaults to enabled outside production and disabled
