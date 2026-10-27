@@ -1,8 +1,16 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { body, param } from "express-validator";
+import { config } from "../config";
 import { jwtAuth } from "../middleware/jwtAuth";
 import { requireAccountMatch } from "../middleware/requireAccountMatch";
 import { isValidMuxedId } from "../utils/muxed";
+import {
+  isValidWeight,
+  MAX_WEIGHT,
+  SetOptionsInput,
+  SetOptionsResult,
+  simulateSetOptions,
+} from "../services/setOptions";
 import { deprecated } from "../middleware/deprecated";
 import { assertValidRequest } from "../middleware/requestValidation";
 import { logKeypairIssuance } from "../services/auditLog";
@@ -482,15 +490,15 @@ export function createWalletRouter(stellar: StellarService): Router {
           highThreshold: req.body.highThreshold,
         };
 
-        const account = await stellar.server.loadAccount(input.sourcePublicKey);
+        const account = await stellar.getAccount(input.sourcePublicKey);
         const simulation = simulateSetOptions(account, input);
 
         const builder = new StellarSdk.TransactionBuilder(account, {
           fee: StellarSdk.BASE_FEE,
-          networkPassphrase: stellar.networkPassphrase,
+          networkPassphrase: config.NETWORK_PASSPHRASE,
         });
 
-        const opts: StellarSdk.OperationOptions.SetOptions = {};
+        const opts: Parameters<typeof StellarSdk.Operation.setOptions>[0] = {};
         if (input.masterWeight !== undefined) {
           opts.masterWeight = input.masterWeight;
         }
@@ -498,7 +506,7 @@ export function createWalletRouter(stellar: StellarService): Router {
           opts.lowThreshold = input.lowThreshold;
         }
         if (input.mediumThreshold !== undefined) {
-          opts.mediumThreshold = input.mediumThreshold;
+          opts.medThreshold = input.mediumThreshold;
         }
         if (input.highThreshold !== undefined) {
           opts.highThreshold = input.highThreshold;
@@ -538,7 +546,7 @@ export function createWalletRouter(stellar: StellarService): Router {
 
         const result: SetOptionsResult = {
           xdr: transaction.toXDR(),
-          networkPassphrase: stellar.networkPassphrase,
+          networkPassphrase: config.NETWORK_PASSPHRASE,
           warnings: simulation.warnings,
           resultingSigners: simulation.signers,
           resultingThresholds: simulation.thresholds,
