@@ -1,0 +1,39 @@
+{
+  "id": "GABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEJXA",
+  "account_id": "GABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEJXA",
+  "sequence": "8589934592",
+  "subentry_count": 2,
+  "thresholds": {
+    "low_threshold": 1,
+    "med_threshold": 2,
+    "high_threshold": 3
+  },
+  "flags": {
+    "auth_required": false,
+    "auth_revocable": false,
+    "auth_immutable": false
+  },
+  "balances": [
+    {
+      "balance": "50.0000000",
+      "asset_type": "native"
+    }
+  ],
+  "signers": [
+    {
+      "weight": 1,
+      "key": "GABAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEJXA",
+      "type": "ed25519_public_key"
+    },
+    {
+      "weight": 1,
+      "key": "GABQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQGAYDAMBQHGPC",
+      "type": "ed25519_public_key"
+    },
+    {
+      "weight": 1,
+      "key": "GACAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAJJHP",
+      "type": "ed25519_public_key"
+    }
+  ]
+}

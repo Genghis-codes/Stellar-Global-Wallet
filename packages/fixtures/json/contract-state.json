@@ -1,0 +1,30 @@
+{
+  "assets": [
+    {
+      "code": "XLM",
+      "issuer": "",
+      "limit": "0"
+    },
+    {
+      "code": "USDC",
+      "issuer": "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+      "limit": "500.0000000"
+    }
+  ],
+  "limits": {
+    "daily": "500.0000000",
+    "perTransaction": "100.0000000"
+  },
+  "guardians": [
+    "GADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOZPI",
+    "GAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEAQCAIBAEARIHQ"
+  ],
+  "recoveryProposal": {
+    "id": "1",
+    "status": "pending",
+    "approvals": [
+      "GADQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOBYHA4DQOZPI"
+    ],
+    "createdAt": "2026-10-02T09:00:00Z"
+  }
+}
