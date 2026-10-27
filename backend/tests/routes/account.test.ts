@@ -31,8 +31,8 @@ describe("Account routes limit validation", () => {
       .get(`/api/v1/account/${G_ADDRESS}/transactions?limit=-5`)
       .expect(400);
 
-    expect(res.body.details).toBeDefined();
-    expect(res.body.details[0].message).toMatch(/limit must be an integer between 1 and 100/);
+    expect(res.body.error.details).toBeDefined();
+    expect(res.body.error.details[0].message).toMatch(/limit must be an integer between 1 and 100/);
   });
 
   it("rejects a limit of 0 with 400", async () => {
@@ -40,8 +40,8 @@ describe("Account routes limit validation", () => {
       .get(`/api/v1/account/${G_ADDRESS}/transactions?limit=0`)
       .expect(400);
 
-    expect(res.body.details).toBeDefined();
-    expect(res.body.details[0].message).toMatch(/limit must be an integer between 1 and 100/);
+    expect(res.body.error.details).toBeDefined();
+    expect(res.body.error.details[0].message).toMatch(/limit must be an integer between 1 and 100/);
   });
 
   it("rejects a non-numeric limit with 400", async () => {
@@ -49,8 +49,8 @@ describe("Account routes limit validation", () => {
       .get(`/api/v1/account/${G_ADDRESS}/transactions?limit=abc`)
       .expect(400);
 
-    expect(res.body.details).toBeDefined();
-    expect(res.body.details[0].message).toMatch(/limit must be an integer between 1 and 100/);
+    expect(res.body.error.details).toBeDefined();
+    expect(res.body.error.details[0].message).toMatch(/limit must be an integer between 1 and 100/);
   });
 
   it("rejects a limit greater than 100 with 400", async () => {
@@ -58,7 +58,7 @@ describe("Account routes limit validation", () => {
       .get(`/api/v1/account/${G_ADDRESS}/transactions?limit=105`)
       .expect(400);
 
-    expect(res.body.details).toBeDefined();
-    expect(res.body.details[0].message).toMatch(/limit must be an integer between 1 and 100/);
+    expect(res.body.error.details).toBeDefined();
+    expect(res.body.error.details[0].message).toMatch(/limit must be an integer between 1 and 100/);
   });
 });

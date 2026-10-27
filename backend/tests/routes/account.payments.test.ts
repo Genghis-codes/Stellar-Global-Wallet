@@ -61,7 +61,7 @@ describe("GET /api/v1/account/:publicKey/payments", () => {
       .get(`/api/v1/account/${G_ADDRESS}/payments?limit=0`)
       .expect(400);
 
-    expect(res.body.details).toBeDefined();
+    expect(res.body.error.details).toBeDefined();
   });
 
   it("rejects an invalid public key with 400", async () => {

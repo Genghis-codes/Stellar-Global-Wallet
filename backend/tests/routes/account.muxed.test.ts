@@ -47,9 +47,9 @@ describe("Account routes muxed-address rejection (issue #5)", () => {
     const res = await request(app)
       .get(`/api/v1/account/${M_ADDRESS}`)
       .expect(400);
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("publicKey");
-    expect(res.body.details[0].message).toContain("Muxed");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("publicKey");
+    expect(res.body.error.details[0].message).toContain("Muxed");
   });
 
   it("accepts a G... address on GET /:publicKey/balances", async () => {
@@ -63,9 +63,9 @@ describe("Account routes muxed-address rejection (issue #5)", () => {
     const res = await request(app)
       .get(`/api/v1/account/${M_ADDRESS}/balances`)
       .expect(400);
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("publicKey");
-    expect(res.body.details[0].message).toContain("Muxed");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("publicKey");
+    expect(res.body.error.details[0].message).toContain("Muxed");
   });
 
   it("accepts a G... address on GET /:publicKey/transactions", async () => {
@@ -79,9 +79,9 @@ describe("Account routes muxed-address rejection (issue #5)", () => {
     const res = await request(app)
       .get(`/api/v1/account/${M_ADDRESS}/transactions`)
       .expect(400);
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("publicKey");
-    expect(res.body.details[0].message).toContain("Muxed");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("publicKey");
+    expect(res.body.error.details[0].message).toContain("Muxed");
   });
 });
 
@@ -103,13 +103,13 @@ describe("Wallet /send muxed-address rejection (issue #5)", () => {
         amount: "10",
       })
       .expect(400);
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details).toEqual([
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details).toEqual([
       expect.objectContaining({
         path: "destinationPublicKey",
       }),
     ]);
-    expect(res.body.details[0].message).toContain("Muxed");
+    expect(res.body.error.details[0].message).toContain("Muxed");
   });
 });
 
@@ -144,8 +144,8 @@ describe("Wallet muxed-account receive endpoint (issue #71)", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ id: "not-a-number" })
       .expect(400);
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("id");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("id");
   });
 
   it("rejects an id outside the uint64 range with 400", async () => {
@@ -155,8 +155,8 @@ describe("Wallet muxed-account receive endpoint (issue #71)", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ id: "18446744073709551616" })
       .expect(400);
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("id");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("id");
   });
 
   it("rejects an invalid public key with 400", async () => {
@@ -166,8 +166,8 @@ describe("Wallet muxed-account receive endpoint (issue #71)", () => {
       .set("Authorization", `Bearer ${accessToken}`)
       .send({ id: "1" })
       .expect(400);
-    expect(res.body.code).toBe("VALIDATION_ERROR");
-    expect(res.body.details[0].path).toBe("publicKey");
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
+    expect(res.body.error.details[0].path).toBe("publicKey");
   });
 
   it("rejects a request without auth with 401", async () => {
@@ -175,6 +175,6 @@ describe("Wallet muxed-account receive endpoint (issue #71)", () => {
       .post(`/api/v1/wallet/${G_ADDRESS}/muxed`)
       .send({ id: "1" })
       .expect(401);
-    expect(res.body.code).toBeDefined();
+    expect(res.body.error.code).toBeDefined();
   });
 });
