@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import { body, param } from "express-validator";
 import { jwtAuth } from "../middleware/jwtAuth";
+import { requireAccountMatch } from "../middleware/requireAccountMatch";
 import { deprecated } from "../middleware/deprecated";
 import { assertValidRequest } from "../middleware/requestValidation";
 import { logKeypairIssuance } from "../services/auditLog";
@@ -141,6 +142,8 @@ export function createWalletRouter(stellar: StellarService): Router {
   });
 
   walletRouter.use(jwtAuth);
+  // #33 — a token for account A cannot act for account B.
+  walletRouter.use(requireAccountMatch());
 
   // #9 — build unsigned XDR for adding or removing a classic Stellar trustline.
   walletRouter.post(

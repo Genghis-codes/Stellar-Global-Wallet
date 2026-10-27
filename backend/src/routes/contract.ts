@@ -3,6 +3,7 @@ import { body, param } from "express-validator";
 import { assertValidRequest, rejectUnknownBodyFields } from "../middleware/requestValidation";
 import { GlobeWalletContract } from "../services/contracts/globeWallet";
 import { jwtAuth } from "../middleware/jwtAuth";
+import { requireAccountMatch } from "../middleware/requireAccountMatch";
 import { deprecated } from "../middleware/deprecated";
 import { isGAddress, publicKeyMessage } from "../utils/stellarAddress";
 import { toStroops } from "../utils/stroops";
@@ -146,6 +147,8 @@ export function createContractRouter(globeWallet: GlobeWalletContract): Router {
   });
 
   contractRouter.use(jwtAuth);
+  // #33 — a token for account A cannot act for account B.
+  contractRouter.use(requireAccountMatch());
 
   // #8 — build unsigned XDR for the wallet's asset registry.
   contractRouter.post(

@@ -23,7 +23,6 @@ import { createNetworkRouter } from "./routes/network";
 import { createDevRouter } from "./routes/dev";
 import { localeMiddleware } from "./middleware/locale";
 import { errorHandler } from "./middleware/errorHandler";
-import { requireAccountMatch } from "./middleware/requireAccountMatch";
 import { config } from "./config";
 import { StellarService } from "./services/stellar";
 import { SorobanService } from "./services/soroban";
@@ -167,32 +166,6 @@ async function runHealthChecks(): Promise<HealthDetails> {
   }
 
   return { status, checks };
-}
-
-/**
- * Resolves the account a request targets for the account-match guard.
- * Checks common locations (body/query/params) for a source/account field.
- * Returns undefined when the request does not target a specific account.
- */
-function resolveTargetAccount(req: express.Request): string | undefined {
-  const body = (req.body ?? {}) as Record<string, unknown>;
-  const query = req.query as Record<string, unknown>;
-  const params = req.params as Record<string, unknown>;
-  const candidates = [
-    body.sourceAccount,
-    body.source,
-    body.account,
-    body.publicKey,
-    body.guardian,
-    query.sourceAccount,
-    query.account,
-    params.account,
-    params.publicKey,
-  ];
-  for (const value of candidates) {
-    if (typeof value === "string" && value.length > 0) return value;
-  }
-  return undefined;
 }
 
 export function createApp(
