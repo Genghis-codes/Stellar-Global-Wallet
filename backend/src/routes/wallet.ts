@@ -629,5 +629,31 @@ export function createWalletRouter(stellar: StellarService): Router {
     }
   );
 
+  walletRouter.post(
+    "/submit-multisig",
+    body("xdr").isString(),
+    body("signerSecretKeys").isArray({ min: 1 }),
+    body("signerSecretKeys.*").isLength({ min: 56, max: 56 }),
+    body("idempotencyKey").optional().isString().isLength({ max: 255 }),
+    (req, res, next) => {
+      const firstSigner = Array.isArray(req.body.signerSecretKeys) ? req.body.signerSecretKeys[0] : undefined;
+      handleIdempotentRequest(req, res, next, firstSigner, () => stellar.submitWithAdditionalSignatures(req.body));
+    }
+  );
+
+  walletRouter.get(
+    "/:publicKey/thresholds",
+    param("publicKey").custom(isGAddress).withMessage(publicKeyMessage),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const result = await stellar.getAccountThresholds(req.params.publicKey);
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
   return walletRouter;
 }
