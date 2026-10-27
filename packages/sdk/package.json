@@ -1,37 +1,44 @@
 {
   "name": "@globe-wallet/sdk",
   "version": "0.1.0",
-  "description": "Typed TypeScript client for the Stellar Global Wallet API, generated from OpenAPI",
+  "description": "Typed client for the GlobeWallet API and Soroban contracts. Works in Node, browsers and React Native.",
   "license": "MIT",
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "default": "./dist/index.js"
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Genghis-codes/Stellar-Global-Wallet.git",
+    "directory": "packages/sdk"
+  },
   "scripts": {
-    "generate": "openapi-typescript ../../backend/openapi.yaml -o src/generated/schema.d.ts",
-    "build": "npm run generate && tsup",
+    "build": "tsc",
     "type-check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "node --test --import tsx tests/validate.test.ts tests/format.test.ts tests/lookalike.test.ts",
+    "test:smoke": "node --test --import tsx tests/smoke/preview-api.test.ts"
   },
   "dependencies": {
-    "openapi-fetch": "^0.13.0"
+    "@globe-wallet/bindings-globe-wallet": "0.0.0",
+    "@stellar/stellar-sdk": "^16.0.1"
   },
   "devDependencies": {
-    "openapi-typescript": "^7.4.0",
-    "tsup": "^8.3.0",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0",
-    "msw": "^2.4.0"
+    "tsx": "^4.7.1",
+    "typescript": "^5.6.0"
   }
 }
