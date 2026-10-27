@@ -370,7 +370,25 @@ export function createApp(
   });
 
   // Health
+  // Liveness only: deploy platforms (Render's healthCheckPath) restart the
+  // service when this fails, so it must not depend on Horizon or Postgres.
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+  // #30 — readiness/diagnostics: per-dependency status and latency, run in
+  // parallel and cached for 10s so polling can't hammer Horizon or the DB.
+  // 503 when a core dependency (Horizon, Soroban RPC) is down.
+  let healthCache: { at: number; value: HealthDetails } | null = null;
+  app.get("/api/v1/health/details", async (_req, res, next) => {
+    try {
+      const now = Date.now();
+      if (!healthCache || now - healthCache.at > HEALTH_CACHE_TTL_MS) {
+        healthCache = { at: now, value: await runHealthChecks() };
+      }
+      res.status(healthCache.value.status === "down" ? 503 : 200).json(healthCache.value);
+    } catch (err) {
+      next(err);
+    }
+  });
 
   // Unversioned and unauthenticated: this is where a browser enforcing
   // the Content-Security-Policy documented in docs/security/csp.md sends

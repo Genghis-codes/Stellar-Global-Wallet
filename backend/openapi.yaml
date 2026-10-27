@@ -841,6 +841,26 @@ paths:
                   status:
                     type: string
                     enum: [ok]
+  /health/details:
+    get:
+      tags: [health]
+      summary: Per-dependency health (Horizon, Soroban RPC, Postgres, Redis)
+      description: >-
+        Runs every dependency check in parallel with a 1.5s timeout each and
+        caches the result for 10 seconds. Redis is reported as skipped unless
+        LOCK_BACKEND=redis. Returns 503 when Horizon or Soroban RPC is down.
+      operationId: getHealthDetails
+      responses:
+        '200':
+          description: All core dependencies reachable (status ok or degraded)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthDetails' }
+        '503':
+          description: A core dependency is down
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthDetails' }
 components:
   securitySchemes:
     bearerAuth:
@@ -941,6 +961,29 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
   schemas:
+    DependencyCheck:
+      type: object
+      required: [ok, latencyMs]
+      properties:
+        ok: { type: boolean }
+        latencyMs: { type: integer }
+        skipped: { type: boolean }
+        error: { type: string }
+    HealthDetails:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down]
+        checks:
+          type: object
+          required: [horizon, rpc, postgres, redis]
+          properties:
+            horizon: { $ref: '#/components/schemas/DependencyCheck' }
+            rpc: { $ref: '#/components/schemas/DependencyCheck' }
+            postgres: { $ref: '#/components/schemas/DependencyCheck' }
+            redis: { $ref: '#/components/schemas/DependencyCheck' }
     ClientConfig:
       type: object
       required:
