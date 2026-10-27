@@ -30,7 +30,7 @@ jobs:
           targets: wasm32v1-none, wasm32-unknown-unknown
 
       - name: Install Stellar CLI
-        run: cargo install --locked stellar-cli --features opt
+        run: cargo install --locked stellar-cli --version 27.0.0
 
       - name: Generate bindings
         run: bash contract/scripts/bindings.sh
