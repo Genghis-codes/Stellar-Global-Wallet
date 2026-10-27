@@ -8,6 +8,10 @@ describe("Morgan middleware body logging security", () => {
   let app: Express;
   let logOutput: string[] = [];
 
+  const combined = morgan.compile(
+    ':remote-addr - :remote-user [:date[clf]] ":method :url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"'
+  );
+
   beforeEach(() => {
     logOutput = [];
     app = express();
@@ -15,7 +19,7 @@ describe("Morgan middleware body logging security", () => {
     // Set up morgan to capture output instead of writing to stdout
     app.use(
       morgan((tokens, req, res) => {
-        const log = morgan.combined(tokens, req, res);
+        const log = combined(tokens, req, res);
         if (log) {
           logOutput.push(log);
         }
