@@ -114,7 +114,7 @@ describe("Wallet /send muxed-address rejection (issue #5)", () => {
 });
 
 describe("Wallet muxed-account receive endpoint (issue #71)", () => {
-  const G_ADDRESS = "GBZH7QMRVYFLVYQRY6O5SOM3G7MSQF7MMUEM3WUOGRV26W3R3K5M7G8A";
+  const G_ADDRESS = "GA3EMLUPHQXMOYD636TIOS6QTQKTRHHFUTBAKNPHTTSQ4CSJ4GYCY4D5";
 
   async function getAccessToken(): Promise<string> {
     const login = await request(app)
