@@ -69,10 +69,20 @@ async function timedCheck(
   fn: (signal: AbortSignal) => Promise<unknown>
 ): Promise<DependencyCheck> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
+  // The abort signal only stops fetch-based checks; pg and redis ignore it,
+  // so race every check against the deadline as well.
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      const err = new Error("Health check timed out");
+      err.name = "TimeoutError";
+      reject(err);
+    }, HEALTH_CHECK_TIMEOUT_MS);
+  });
   const start = Date.now();
   try {
-    await fn(controller.signal);
+    await Promise.race([fn(controller.signal), deadline]);
     return { ok: true, latencyMs: Date.now() - start };
   } catch (err) {
     return {
