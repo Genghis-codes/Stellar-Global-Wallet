@@ -4,6 +4,7 @@ import {
   InternalServerError,
   PayloadTooLargeError,
   isAppError,
+  isErrorCode,
 } from "../errors/appError";
 import { SorobanTransactionError } from "../services/sorobanErrors";
 
@@ -54,7 +55,11 @@ function toAppError(error: unknown): AppError {
     const status = clientErrorStatus(error);
     if (status !== null) {
       const type = (error as { type?: unknown }).type;
-      const code = typeof type === "string" ? type.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "REQUEST_ERROR";
+      // Only surface codes from the published catalogue; a library's own
+      // error type (e.g. body-parser's "entity.parse.failed") is not part
+      // of the API contract, so it collapses to REQUEST_ERROR.
+      const derived = typeof type === "string" ? type.toUpperCase().replace(/[^A-Z0-9]+/g, "_") : "";
+      const code = isErrorCode(derived) ? derived : "REQUEST_ERROR";
       return new AppError(error.message, { code, status });
     }
     return new InternalServerError(error.message);
