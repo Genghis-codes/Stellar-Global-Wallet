@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { body, param } from "express-validator";
 import { jwtAuth } from "../middleware/jwtAuth";
 import { requireAccountMatch } from "../middleware/requireAccountMatch";
+import { isValidMuxedId } from "../utils/muxed";
 import { deprecated } from "../middleware/deprecated";
 import { assertValidRequest } from "../middleware/requestValidation";
 import { logKeypairIssuance } from "../services/auditLog";
@@ -403,10 +404,9 @@ export function createWalletRouter(stellar: StellarService): Router {
         assertValidRequest(req);
         const publicKey = req.params.publicKey;
         const id = BigInt(req.body.id);
-        const muxed = new StellarSdk.MuxedAccount(
-          StellarSdk.Keypair.fromPublicKey(publicKey),
-          id
-        );
+        // MuxedAccount only needs the base account ID; the sequence number
+        // is irrelevant for deriving the M... address.
+        const muxed = new StellarSdk.MuxedAccount(new StellarSdk.Account(publicKey, "0"), id.toString());
         res.json({
           publicKey,
           id: id.toString(),
