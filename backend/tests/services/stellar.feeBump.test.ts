@@ -98,8 +98,9 @@ describe("StellarService.feeBumpTransaction (issue #4)", () => {
       feeSecretKey: feeKeypair.secret(),
     });
 
-    // Default fee should be 100x base fee
-    expect(capturedFee).toBe(String(100 * StellarSdk.BASE_FEE));
+    // Default rate is 100x base fee per operation. A fee-bump's total fee
+    // covers the inner operations plus the bump itself (1 op + 1 = 2).
+    expect(capturedFee).toBe(String(100 * Number(StellarSdk.BASE_FEE) * 2));
   });
 
   it("uses the explicit fee when one is provided", async () => {
@@ -145,7 +146,8 @@ describe("StellarService.feeBumpTransaction (issue #4)", () => {
       fee: "5000000",
     });
 
-    expect(capturedFee).toBe("5000000");
+    // Explicit fee is the per-operation rate; total = rate * (1 op + 1).
+    expect(capturedFee).toBe(String(5000000 * 2));
   });
 
   it("can use a different fee source than the payment source", async () => {
