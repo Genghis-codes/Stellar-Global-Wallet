@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Keypair, StrKey, WebAuth } from "@stellar/stellar-sdk";
 import { body, query } from "express-validator";
 import { rateLimit } from "express-rate-limit";
 import { AppError, UnauthorizedError } from "../errors/appError";
@@ -42,10 +43,17 @@ const loginLimiter = rateLimit({
 // SEP-10 challenge lifetime in seconds.
 const CHALLENGE_TTL_SECONDS = 300;
 
-const networkPassphrase =
-  config.STELLAR_NETWORK === "public" ? Networks.PUBLIC : Networks.TESTNET;
+// Use the configured passphrase rather than deriving one from
+// STELLAR_NETWORK, so challenges always match the network Horizon serves.
+const networkPassphrase = config.NETWORK_PASSPHRASE;
 
 function getServerKeypair(): Keypair {
+  if (!config.SEP10_SIGNING_SECRET) {
+    throw new AppError("SEP-10 authentication is not configured on this server", {
+      code: "SEP10_NOT_CONFIGURED",
+      status: 503,
+    });
+  }
   return Keypair.fromSecret(config.SEP10_SIGNING_SECRET);
 }
 
@@ -77,10 +85,10 @@ authRouter.get(
     try {
       assertValidRequest(req);
       const account = String(req.query.account);
-      if (!Keypair.isValidPublicKey(account)) {
-        throw new BadRequestError("Invalid Stellar account", "INVALID_ACCOUNT");
+      if (!StrKey.isValidEd25519PublicKey(account)) {
+        throw new AppError("Invalid Stellar account", { code: "INVALID_ADDRESS", status: 400 });
       }
-      const challenge = Utils.buildChallengeTx(
+      const challenge = WebAuth.buildChallengeTx(
         getServerKeypair(),
         account,
         config.HOME_DOMAIN,
@@ -103,8 +111,9 @@ authRouter.post(
     try {
       assertValidRequest(req);
       const serverKeypair = getServerKeypair();
-      const { tx, clientAccountID } = Utils.readChallengeTx(
-        req.body.transaction,
+      const transaction = String(req.body.transaction);
+      const { clientAccountID } = WebAuth.readChallengeTx(
+        transaction,
         serverKeypair.publicKey(),
         networkPassphrase,
         config.HOME_DOMAIN,
@@ -116,23 +125,23 @@ authRouter.post(
       // multisig, so we check signers/thresholds against Horizon.
       const signers = await loadAccountSigners(clientAccountID);
       if (signers) {
-        Utils.verifyChallengeTxThreshold(
-          tx,
+        WebAuth.verifyChallengeTxThreshold(
+          transaction,
           serverKeypair.publicKey(),
           networkPassphrase,
-          config.HOME_DOMAIN,
-          config.WEB_AUTH_DOMAIN,
           signers.threshold,
-          signers.signers
+          signers.signers,
+          config.HOME_DOMAIN,
+          config.WEB_AUTH_DOMAIN
         );
       } else {
-        Utils.verifyChallengeTxSigners(
-          tx,
+        WebAuth.verifyChallengeTxSigners(
+          transaction,
           serverKeypair.publicKey(),
           networkPassphrase,
+          [clientAccountID],
           config.HOME_DOMAIN,
-          config.WEB_AUTH_DOMAIN,
-          [clientAccountID]
+          config.WEB_AUTH_DOMAIN
         );
       }
 
@@ -154,7 +163,7 @@ authRouter.post(
 
 interface AccountSigners {
   threshold: number;
-  signers: { key: string; weight: number }[];
+  signers: { key: string; weight: number; type: string }[];
 }
 
 // Load signers from Horizon. Returns null for unfunded accounts (404),
@@ -170,7 +179,7 @@ async function loadAccountSigners(account: string): Promise<AccountSigners | nul
   }
   const data = (await response.json()) as {
     thresholds?: { med_threshold?: number };
-    signers?: { key: string; weight: number }[];
+    signers?: { key: string; weight: number; type: string }[];
   };
   return {
     threshold: data.thresholds?.med_threshold ?? 0,
