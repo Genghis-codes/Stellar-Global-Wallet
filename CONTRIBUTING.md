@@ -55,7 +55,7 @@ once that spec exists). Until then:
   [`backend/docs/rate-limits.md`](backend/docs/rate-limits.md) covers
   request limits and backoff.
 - **Run the real API against testnet locally** rather than waiting for a
-  mock: `cd backend && cp .env.example .env && npm install && npm run dev`
+  mock: `npm ci && npm run build:packages && cp backend/.env.example backend/.env && npm run dev --workspace backend` (from the repo root)
   — the committed `.env.example` already points at a live testnet contract
   with a demo user, so read endpoints work with no setup beyond `npm run
   dev`. See [`backend/README.md`](backend/README.md#getting-started).

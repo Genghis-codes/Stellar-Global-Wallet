@@ -4,13 +4,21 @@ Express + TypeScript API for the Stellar Global Wallet.
 
 ## Getting started
 
+The backend is an npm workspace, so install and build from the repo root:
+
 ```bash
+cd ..                         # repo root
+npm ci
+npm run build:packages        # SDK + contract bindings the backend imports
+cd backend
 cp .env.example .env          # testnet defaults + a live demo contract ID
-npm install
-npm run dev     # API on http://localhost:4000
+npm run dev                   # API on http://localhost:4000
 npm test
 npm run type-check
 ```
+
+Postgres and Redis are expected at the URLs in `.env`; `docker compose up
+-d postgres redis` from the repo root starts both.
 
 ## API documentation
 

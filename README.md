@@ -56,16 +56,16 @@ git clone https://github.com/Genghis-codes/Stellar-Global-Wallet.git
 cd Stellar-Global-Wallet
 ```
 
-This repo is an npm workspace root (`backend`, `packages/*`) — run `npm install` once at the repo root, not inside `backend/`, so the shared `packages/types` package resolves.
+This repo is an npm workspace root (`backend`, `packages/*`, `packages/bindings/*`). Run `npm ci` once at the repo root, not inside `backend/`, then `npm run build:packages` so the SDK and contract bindings the backend imports are built. Node 20.19+ is required (`.nvmrc` pins 22).
 
 | Part | Setup |
 |---|---|
-| ⚙️ Backend (manual) | `npm install && cp backend/.env.example backend/.env && npm run dev --workspace backend` |
-| 🐳 Backend (Docker) | `cp .env.example .env && docker compose up --build` → API on `http://localhost:4000` (Postgres + Redis included) |
+| ⚙️ Backend (manual) | `npm ci && npm run build:packages && cp backend/.env.example backend/.env && npm run dev --workspace backend` |
+| 🐳 Backend (Docker) | `cp backend/.env.example backend/.env && docker compose up --build` → API on `http://localhost:4000` (Postgres + Redis included) |
 | 🛰️ Local Stellar network | `docker compose --profile local up -d stellar` then `contract/scripts/deploy-local.sh` — avoids testnet resets/Friendbot limits, see [`contract/README.md`](contract/README.md) |
 | 📜 Contracts | `cd contract && cargo test --workspace` |
-| 📦 SDK / packages | `npm install && npm run build --workspaces` (from the repo root) |
-| 🔗 Contract bindings | `contract/scripts/bindings.sh` — regenerates `packages/bindings/globe-wallet` and `packages/bindings/token-wrapper` |
+| 📦 SDK / packages | `npm ci && npm run build:packages && npm test --workspace packages/sdk` (from the repo root) |
+| 🔗 Contract bindings | `contract/scripts/bindings.sh` — regenerates `packages/bindings/globe-wallet` from the built contract (requires the Stellar CLI) |
 | 🧪 Seeded Demo Wallet | `npm run seed:demo --workspace backend` — provisions 5 testnet accounts, assets, limits, and recovery state |
 | 🖥️ / 📱 Apps | Not built yet. This is a great place to start contributing! |
 
