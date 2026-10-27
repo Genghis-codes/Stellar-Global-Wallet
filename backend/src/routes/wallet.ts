@@ -417,6 +417,7 @@ export function createWalletRouter(stellar: StellarService): Router {
         const muxed = new StellarSdk.MuxedAccount(new StellarSdk.Account(publicKey, "0"), id.toString());
         res.json({
           publicKey,
+          baseAccount: muxed.baseAccount().accountId(),
           id: id.toString(),
           muxedAccount: muxed.accountId(),
         });
