@@ -5,7 +5,7 @@
 # @globe-wallet/sdk, the generated contract bindings and
 # @stellar-global-wallet/types from packages/.
 
-FROM node:22-slim AS build
+FROM node:26-slim AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
@@ -19,7 +19,7 @@ RUN npm run build:packages
 COPY backend ./backend
 RUN npm run build --workspace backend
 
-FROM node:22-slim AS runtime
+FROM node:26-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
