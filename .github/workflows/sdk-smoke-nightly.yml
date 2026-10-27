@@ -48,12 +48,16 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install workspace dependencies
         if: steps.config.outputs.configured == 'true'
-        run: npm install
+        run: npm ci
+
+      - name: Build the contract bindings the SDK imports
+        if: steps.config.outputs.configured == 'true'
+        run: npm run build --workspace packages/bindings/globe-wallet
 
       - name: Run SDK smoke tests against the preview API
         if: steps.config.outputs.configured == 'true'
