@@ -67,12 +67,16 @@ describe("OpenAPI amount fields (issue #25)", () => {
       if (!fieldMatch) return;
       const [, indent, field] = fieldMatch;
       if (!AMOUNT_FIELD.test(field)) return;
-      // Inspect the immediate child lines of this field for a numeric type.
+      // Inspect the field's own `type` only (its direct children). Nested
+      // properties, e.g. BaseUnitAmount.decimals, are separate fields.
+      let directIndent: number | undefined;
       for (let i = index + 1; i < lines.length; i += 1) {
         const child = lines[i];
         if (child.trim() === "") continue;
         const childIndent = child.match(/^(\s*)/)?.[1].length ?? 0;
         if (childIndent <= indent.length) break;
+        directIndent ??= childIndent;
+        if (childIndent !== directIndent) continue;
         if (/^\s*type:\s*(number|integer)\s*$/.test(child)) {
           offenders.push(`${field} (line ${i + 1})`);
         }
