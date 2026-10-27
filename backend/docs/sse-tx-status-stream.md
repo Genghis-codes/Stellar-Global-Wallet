@@ -130,7 +130,7 @@ after headers are sent.
 ## Usage example (browser via SDK)
 
 ```ts
-import { subscribe } from "@stellar-global-wallet/sdk";
+import { subscribe } from "@globe-wallet/sdk";
 
 const controller = new AbortController();
 

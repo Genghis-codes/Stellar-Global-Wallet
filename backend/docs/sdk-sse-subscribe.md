@@ -13,7 +13,7 @@ The native browser `EventSource` API cannot send `Authorization` headers, and it
 ## Public API
 
 ```ts
-import { subscribe } from "@stellar-global-wallet/sdk";
+import { subscribe } from "@globe-wallet/sdk";
 import type { RealtimeEvent } from "@stellar-global-wallet/types";
 
 const controller = new AbortController();
@@ -93,7 +93,7 @@ If the JWT expires while a stream is open:
 
 ```tsx
 import { useEffect } from "react";
-import { subscribe } from "@stellar-global-wallet/sdk";
+import { subscribe } from "@globe-wallet/sdk";
 import type { RecoveryInitiatedEvent } from "@stellar-global-wallet/types";
 
 function RecoveryBanner({ publicKey }: { publicKey: string }) {

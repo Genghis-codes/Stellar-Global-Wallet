@@ -6,13 +6,13 @@ browsers and React Native (no Node-only modules in the runtime path).
 ## Install
 
 ```bash
-npm install @stellar-global-wallet/sdk
+npm install @globe-wallet/sdk
 ```
 
 ## Quick start
 
 ```ts
-import { createClient, InMemoryTokenStore } from '@stellar-global-wallet/sdk';
+import { createClient, InMemoryTokenStore } from '@globe-wallet/sdk';
 
 const client = createClient({
   baseUrl: 'http://localhost:4000',
@@ -65,7 +65,7 @@ If the refresh token itself is expired or revoked, the SDK clears the
 `SessionExpiredError`:
 
 ```ts
-import { SessionExpiredError } from '@stellar-global-wallet/sdk';
+import { SessionExpiredError } from '@globe-wallet/sdk';
 
 try {
   await client.get('/wallets');

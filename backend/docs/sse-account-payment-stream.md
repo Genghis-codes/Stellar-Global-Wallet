@@ -163,7 +163,7 @@ a gap to replay missed events.
 ## Usage example (via SDK)
 
 ```ts
-import { subscribe } from "@stellar-global-wallet/sdk";
+import { subscribe } from "@globe-wallet/sdk";
 import type { PaymentReceivedEvent } from "@stellar-global-wallet/types";
 
 const controller = new AbortController();

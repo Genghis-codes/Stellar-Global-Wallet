@@ -1,5 +1,5 @@
 {
-  "name": "@stellar-global-wallet/sdk",
+  "name": "@globe-wallet/sdk",
   "version": "0.1.0",
   "description": "Typed TypeScript client for the Stellar Global Wallet API, generated from OpenAPI",
   "license": "MIT",
