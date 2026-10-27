@@ -1,5 +1,6 @@
 import { Router } from "express";
-import { param, query } from "express-validator";
+import { body, param, query } from "express-validator";
+import { Account, MuxedAccount } from "@stellar/stellar-sdk";
 import { z } from "zod";
 import { assertValidRequest } from "../middleware/requestValidation";
 import { StellarService } from "../services/stellar";
@@ -8,6 +9,7 @@ import { isGAddress, publicKeyMessage } from "../utils/stellarAddress";
 import { AppError } from "../errors/appError";
 import { getDb } from "../db";
 import { jwtAuth } from "../middleware/jwtAuth";
+import { isValidMuxedId } from "../utils/muxed";
 import { MAX_EXPORT_RANGE_MS, streamTransactionCsv } from "../services/transactionExport";
 
 // #24 — shared cursor pagination contract. `cursor` is an opaque paging token
@@ -168,26 +170,15 @@ export function createAccountRouter(stellar: StellarService): Router {
     "/:publicKey/muxed",
     param("publicKey").custom(isGAddress).withMessage(publicKeyMessage),
     body("id")
-      .exists({ checkFalsy: false })
-      .withMessage("id is required")
-      .custom((value) => {
-        const str = typeof value === "number" ? String(value) : value;
-        if (typeof str !== "string" || !/^\d+$/.test(str)) {
-          throw new Error("id must be a non-negative integer string");
-        }
-        if (BigInt(str) > BigInt("18446744073709551615")) {
-          throw new Error("id must fit in an unsigned 64-bit integer");
-        }
-        return true;
-      }),
+      .exists({ checkNull: true })
+      .bail()
+      .custom(isValidMuxedId)
+      .withMessage("id must be a non-negative integer within the uint64 range"),
     async (req, res, next) => {
       try {
         assertValidRequest(req);
-        const id = String(req.body.id);
-        const muxed = new MuxedAccount(
-          MuxedAccount.fromAddress(req.params.publicKey, id).baseAccount(),
-          id
-        );
+        const id = BigInt(req.body.id).toString();
+        const muxed = new MuxedAccount(new Account(req.params.publicKey, "0"), id);
         res.json({
           address: muxed.accountId(),
           baseAccount: req.params.publicKey,
