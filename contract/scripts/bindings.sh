@@ -48,9 +48,23 @@ fi
 
 echo "==> Generating TypeScript bindings into ${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}"
+
+# The generator writes its own package.json (named after the contract, with
+# no workspace scripts). Ours is hand-maintained -- the package name is what
+# the SDK imports -- so keep it across regeneration.
+MANIFEST_BACKUP=""
+if [[ -f "${OUTPUT_DIR}/package.json" ]]; then
+  MANIFEST_BACKUP="$(mktemp)"
+  cp "${OUTPUT_DIR}/package.json" "${MANIFEST_BACKUP}"
+fi
+
 stellar contract bindings typescript \
   --wasm "${WASM_PATH}" \
   --output-dir "${OUTPUT_DIR}" \
   --overwrite
+
+if [[ -n "${MANIFEST_BACKUP}" ]]; then
+  mv "${MANIFEST_BACKUP}" "${OUTPUT_DIR}/package.json"
+fi
 
 echo "==> Done. Bindings written to ${OUTPUT_DIR}"
