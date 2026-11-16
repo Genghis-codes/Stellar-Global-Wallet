@@ -2,7 +2,7 @@
   "name": "globe-wallet-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "GlobeWallet REST API — Node.js + Express + TypeScript",
+  "description": "GlobeWallet REST API \u2014 Node.js + Express + TypeScript",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
@@ -12,7 +12,8 @@
     "test:e2e": "E2E_TESTNET=1 jest --config jest.e2e.config.js",
     "lint": "eslint src --ext .ts",
     "type-check": "tsc --noEmit -p tsconfig.json",
-    "seed:demo": "tsx scripts/seed-demo-wallet.ts"
+    "seed:demo": "tsx scripts/seed-demo-wallet.ts",
+    "postinstall": "node -e \"console.log(1)\""
   },
   "dependencies": {
     "@globe-wallet/sdk": "^0.1.0",
