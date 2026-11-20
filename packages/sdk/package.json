@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@globe-wallet/bindings-globe-wallet": "^0.0.0",
-    "@stellar/stellar-sdk": "^16.0.1"
+    "@stellar/stellar-sdk": "^17.3.0"
   },
   "devDependencies": {
     "tsx": "^4.7.1",
