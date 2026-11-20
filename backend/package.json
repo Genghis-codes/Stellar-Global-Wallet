@@ -20,7 +20,7 @@
     "@stellar-global-wallet/types": "^0.1.0",
     "@stellar/stellar-sdk": "^16.0.1",
     "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
+    "dotenv": "^18.0.9",
     "express": "^4.19.2",
     "express-rate-limit": "^7.2.0",
     "express-validator": "^7.0.1",
