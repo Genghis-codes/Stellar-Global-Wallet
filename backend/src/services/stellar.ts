@@ -43,6 +43,26 @@ import {
 } from "./transactionHistory";
 import { getVerifiedAssets } from "./verifiedAssets";
 import { BuildIntent, BuiltTransactionRegistry } from "./builtTransactions";
+import {
+  DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES,
+  installUpstreamHttpGuards,
+  isUpstreamValidationFailure,
+  UpstreamValidationError,
+  ValidatedHorizonBalanceLine,
+  validateHorizonAccount,
+  validateHorizonAccountBalances,
+  validateHorizonAccountReserves,
+  validateHorizonAccountThresholds,
+  validateHorizonBaseFee,
+  validateHorizonJoinedTransaction,
+  validateHorizonOperationsPage,
+  validateHorizonPathsPage,
+  validateHorizonPaymentsPage,
+  validateHorizonSubmitResponse,
+  validateHorizonTransactionDetail,
+  validateHorizonTransactionLookup,
+  validateHorizonTransactionsPage,
+} from "./upstreamValidation";
 
 // Re-exported for backward compatibility — this used to be declared locally
 // here. The canonical definition now lives in packages/types (issue #107)
@@ -155,10 +175,22 @@ export class StellarService {
    * (index.ts) always sets it; unit tests that don't care leave it null.
    */
   private readonly builtTxs: BuiltTransactionRegistry | null;
+  private readonly maxResponseBytes: number;
 
-  constructor(accountLock: AccountLock = new InProcessAccountLock(), builtTxs: BuiltTransactionRegistry | null = null) {
+  constructor(
+    accountLock: AccountLock = new InProcessAccountLock(),
+    builtTxs: BuiltTransactionRegistry | null = null,
+    options?: { maxResponseBytes?: number }
+  ) {
     this.networkPassphrase = config.NETWORK_PASSPHRASE;
+    this.maxResponseBytes =
+      options?.maxResponseBytes ?? config.HORIZON_MAX_RESPONSE_BYTES;
     this.server = new StellarSdk.Horizon.Server(config.HORIZON_URL);
+    installUpstreamHttpGuards(
+      "horizon",
+      (this.server as unknown as { httpClient?: unknown }).httpClient,
+      this.maxResponseBytes
+    );
     this.accountLock = accountLock;
     this.builtTxs = builtTxs;
   }
@@ -174,7 +206,10 @@ export class StellarService {
 
   async getAccount(publicKey: string) {
     try {
-      return await this.server.loadAccount(publicKey);
+      return validateHorizonAccount(
+        await this.server.loadAccount(publicKey),
+        this.maxResponseBytes
+      );
     } catch (err) {
       if (hasResponseStatus(err, 404)) {
         throw new NotFoundError(`Account ${publicKey} was not found on Horizon`, "ACCOUNT_NOT_FOUND");
@@ -186,7 +221,10 @@ export class StellarService {
   /** Like `getAccount`, but resolves to `null` instead of throwing on 404. */
   async loadAccountOrNull(publicKey: string): Promise<StellarSdk.Horizon.AccountResponse | null> {
     try {
-      return await this.server.loadAccount(publicKey);
+      return validateHorizonAccount(
+        await this.server.loadAccount(publicKey),
+        this.maxResponseBytes
+      );
     } catch (err) {
       if (hasResponseStatus(err, 404)) return null;
       throw err;
@@ -244,9 +282,15 @@ export class StellarService {
     }
 
     const sourceAccount = await this.getAccount(accountId);
+    const validatedSource = validateHorizonAccountReserves(sourceAccount, this.maxResponseBytes);
     const asset = new StellarSdk.Asset(assetInfo.code, assetInfo.issuer);
-    const trustline = (sourceAccount.balances as unknown as BalanceLine[]).find(
-      (balance) =>
+    const trustline = validatedSource.balances.find(
+      (
+        balance
+      ): balance is Extract<
+        ValidatedHorizonBalanceLine,
+        { asset_type: "credit_alphanum4" | "credit_alphanum12" }
+      > =>
         (balance.asset_type === "credit_alphanum4" ||
           balance.asset_type === "credit_alphanum12") &&
         balance.asset_code === assetInfo.code &&
@@ -264,7 +308,9 @@ export class StellarService {
     }
 
     const currentSpendable = BigInt(
-      toStroops(spendableBalance(sourceAccount, StellarSdk.Asset.native()) ?? "0")
+      toStroops(
+        spendableBalance(sourceAccount, StellarSdk.Asset.native(), this.maxResponseBytes) ?? "0"
+      )
     );
     const removalReleasesReserve =
       isRemoval && (!trustline?.sponsor || trustline.sponsor === accountId);
@@ -299,10 +345,13 @@ export class StellarService {
 
   async getBalances(publicKey: string): Promise<Record<string, string>> {
     const account = await this.getAccount(publicKey);
+    const balances = validateHorizonAccountBalances(account, this.maxResponseBytes);
     const result: Record<string, string> = {};
-    for (const b of account.balances) {
+    for (const b of balances) {
       if (b.asset_type === "native") result["XLM"] = b.balance;
-      else if ("asset_code" in b) result[b.asset_code] = b.balance;
+      else if (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") {
+        result[b.asset_code] = b.balance;
+      }
     }
     return result;
   }
@@ -337,7 +386,10 @@ export class StellarService {
     if (cursor) {
       builder = builder.cursor(cursor);
     }
-    const records = await builder.call();
+    const records = validateHorizonTransactionsPage(
+      await builder.call(),
+      this.maxResponseBytes
+    );
     const transactions: TransactionSummary[] = records.records.map((tx) => ({
       id: tx.id,
       hash: tx.hash,
@@ -349,7 +401,7 @@ export class StellarService {
     const lastRecord = records.records[records.records.length - 1];
     const result = {
       transactions,
-      next: lastRecord ? (lastRecord as unknown as { paging_token: string }).paging_token : undefined,
+      next: lastRecord ? lastRecord.paging_token : undefined,
       hasMore: records.records.length === limit,
     };
 
@@ -389,7 +441,10 @@ export class StellarService {
     if (cursor) {
       builder = builder.cursor(cursor);
     }
-    const records = await builder.call();
+    const records = validateHorizonPaymentsPage(
+      await builder.call(),
+      this.maxResponseBytes
+    );
 
     const dustThreshold = config.SPAM_DUST_THRESHOLD;
     // Curated list (#54) plus any per-deployment VERIFIED_ASSETS additions.
@@ -399,7 +454,7 @@ export class StellarService {
     ]);
 
     const payments: PaymentHistoryItem[] = await Promise.all(
-      records.records.map(async (op) => {
+      records.map(async (op) => {
         // Only payment-shaped operations carry a single amount+asset;
         // everything else (create_account, account_merge, ...) still shows
         // up in the feed but without these fields — see PaymentHistoryItem.
@@ -414,9 +469,15 @@ export class StellarService {
         // rather than making a second Horizon request per item.
         let memo: string | undefined;
         try {
-          const transaction = await op.transaction();
+          const transaction = validateHorizonJoinedTransaction(
+            await op.transaction(),
+            this.maxResponseBytes
+          );
           memo = transaction.memo;
         } catch (err) {
+          if (isUpstreamValidationFailure(err)) {
+            throw err;
+          }
           console.warn(`[stellar] failed to read joined transaction for operation ${op.id}: ${err}`);
         }
 
@@ -443,11 +504,11 @@ export class StellarService {
       })
     );
 
-    const lastRecord = records.records[records.records.length - 1];
+    const lastRecord = records[records.length - 1];
     return {
       payments,
-      next: lastRecord ? (lastRecord as unknown as { paging_token: string }).paging_token : undefined,
-      hasMore: records.records.length === limit,
+      next: lastRecord ? lastRecord.paging_token : undefined,
+      hasMore: records.length === limit,
     };
   }
 
@@ -493,7 +554,10 @@ export class StellarService {
 
     let records: StellarSdk.Horizon.ServerApi.OperationRecord[];
     try {
-      records = (await builder.call()).records;
+      records = validateHorizonOperationsPage(
+        await builder.call(),
+        this.maxResponseBytes
+      );
     } catch (err) {
       if (hasResponseStatus(err, 404)) {
         throw new NotFoundError(`Account ${publicKey} was not found on Horizon`, "ACCOUNT_NOT_FOUND");
@@ -512,8 +576,14 @@ export class StellarService {
         // rather than making a second Horizon request per item.
         let tx: HorizonTransactionLike | undefined;
         try {
-          tx = (await op.transaction()) as unknown as HorizonTransactionLike;
+          tx = validateHorizonJoinedTransaction(
+            await op.transaction(),
+            this.maxResponseBytes
+          ) as unknown as HorizonTransactionLike;
         } catch (err) {
+          if (isUpstreamValidationFailure(err)) {
+            throw err;
+          }
           console.warn(`[stellar] failed to read joined transaction for operation ${op.id}: ${err}`);
         }
         return mapOperationToHistoryItem(op as unknown as HorizonOperationLike, tx, publicKey);
@@ -529,7 +599,10 @@ export class StellarService {
   async getTransactionDetail(hash: string, perspective?: string): Promise<TransactionDetail> {
     let tx: StellarSdk.Horizon.ServerApi.TransactionRecord;
     try {
-      tx = await this.server.transactions().transaction(hash).call();
+      tx = validateHorizonTransactionDetail(
+        await this.server.transactions().transaction(hash).call(),
+        this.maxResponseBytes
+      );
     } catch (err) {
       if (hasResponseStatus(err, 404)) {
         throw new NotFoundError(`Transaction ${hash} was not found on Horizon`, "TRANSACTION_NOT_FOUND");
@@ -539,12 +612,15 @@ export class StellarService {
 
     // A transaction has at most 100 operations, so one 200-record page
     // always covers it.
-    const ops = await this.server
-      .operations()
-      .forTransaction(hash)
-      .includeFailed(true)
-      .limit(200)
-      .call();
+    const opsRecords = validateHorizonOperationsPage(
+      await this.server
+        .operations()
+        .forTransaction(hash)
+        .includeFailed(true)
+        .limit(200)
+        .call(),
+      this.maxResponseBytes
+    );
 
     const viewer = perspective ?? tx.source_account;
     const txLike = tx as unknown as HorizonTransactionLike;
@@ -561,7 +637,7 @@ export class StellarService {
       memoType: tx.memo_type,
       operationCount: tx.operation_count,
       perspective: viewer,
-      operations: ops.records.map((op) =>
+      operations: opsRecords.map((op) =>
         mapOperationToHistoryItem(op as unknown as HorizonOperationLike, txLike, viewer)
       ),
       explorerUrl: explorerTxUrl(this.networkPassphrase, tx.hash),
@@ -578,7 +654,10 @@ export class StellarService {
     try {
       const account = await this.getAccount(publicKey);
       return accountRequiresMemo(account);
-    } catch {
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       // If the account doesn't exist on the network, we can't check —
       // let the send proceed and Horizon will reject if needed.
       return false;
@@ -624,7 +703,10 @@ export class StellarService {
         tx.sign(sourceKeypair);
 
         try {
-          const result = await this.server.submitTransaction(tx);
+          const result = validateHorizonSubmitResponse(
+            await this.server.submitTransaction(tx),
+            this.maxResponseBytes
+          );
           if (attempt > 0) {
             const prefix = methodName === "sendPayment" ? "" : `${methodName} `;
             console.log(
@@ -838,7 +920,10 @@ export class StellarService {
     assertNotExpired(parsed.transaction);
 
     try {
-      const response = await this.server.submitTransaction(parsed.transaction);
+      const response = validateHorizonSubmitResponse(
+        await this.server.submitTransaction(parsed.transaction),
+        this.maxResponseBytes
+      );
       return { hash: response.hash, ledger: response.ledger, successful: response.successful };
     } catch (err) {
       // A gateway timeout says nothing about whether the transaction landed.
@@ -879,9 +964,15 @@ export class StellarService {
 
   private async transactionExists(hash: string): Promise<boolean> {
     try {
-      await this.server.transactions().transaction(hash).call();
+      validateHorizonTransactionLookup(
+        await this.server.transactions().transaction(hash).call(),
+        this.maxResponseBytes
+      );
       return true;
-    } catch {
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       return false;
     }
   }
@@ -1041,7 +1132,7 @@ export class StellarService {
 
     if (asset.isNative() || asset.getIssuer() === baseDestination) return;
     const label = asset.getCode();
-    const trustline = findTrustline(destination, asset);
+    const trustline = findTrustline(destination, asset, this.maxResponseBytes);
     if (!trustline) {
       throw new DestinationTrustlineError(
         `Destination account ${baseDestination} does not trust ${label} and cannot receive it.`,
@@ -1066,8 +1157,15 @@ export class StellarService {
   /** Current per-operation fee from Horizon, falling back to the protocol minimum if unreachable. */
   private async currentBaseFee(): Promise<string> {
     try {
-      return String(await this.server.fetchBaseFee());
-    } catch {
+      const fee = validateHorizonBaseFee(
+        await this.server.fetchBaseFee(),
+        this.maxResponseBytes
+      );
+      return String(fee);
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       return StellarSdk.BASE_FEE;
     }
   }
@@ -1118,7 +1216,7 @@ export class StellarService {
         blocking: true,
       });
     } else {
-      spendable = spendableBalance(source, stellarAsset);
+      spendable = spendableBalance(source, stellarAsset, this.maxResponseBytes);
       if (spendable === undefined) {
         warnings.push({
           code: "AMOUNT_EXCEEDS_SPENDABLE",
@@ -1167,7 +1265,7 @@ export class StellarService {
       }
     } else {
       if (!stellarAsset.isNative() && stellarAsset.getIssuer() !== destinationPublicKey) {
-        const trustline = findTrustline(destinationAccount, stellarAsset);
+        const trustline = findTrustline(destinationAccount, stellarAsset, this.maxResponseBytes);
         if (!trustline) {
           warnings.push({
             code: "NO_TRUSTLINE",
@@ -1231,8 +1329,10 @@ export class StellarService {
         .order("desc");
       if (cursor) builder = builder.cursor(cursor);
 
-      const page = await builder.call();
-      const records = page.records;
+      const records = validateHorizonPaymentsPage(
+        await builder.call(),
+        this.maxResponseBytes
+      );
       if (records.length === 0) return;
 
       const batch: PaymentExportRecord[] = [];
@@ -1246,8 +1346,14 @@ export class StellarService {
         }
         let transaction: StellarSdk.Horizon.ServerApi.TransactionRecord | undefined;
         try {
-          transaction = await op.transaction();
+          transaction = validateHorizonJoinedTransaction(
+            await op.transaction(),
+            this.maxResponseBytes
+          );
         } catch (err) {
+          if (isUpstreamValidationFailure(err)) {
+            throw err;
+          }
           console.warn(`[stellar] failed to read joined transaction for operation ${op.id}: ${err}`);
         }
         batch.push({ op, transaction });
@@ -1255,7 +1361,7 @@ export class StellarService {
 
       if (batch.length > 0) yield batch;
       if (reachedStart || records.length < pageSize) return;
-      cursor = (records[records.length - 1] as unknown as { paging_token: string }).paging_token;
+      cursor = records[records.length - 1].paging_token;
     }
   }
 
@@ -1383,8 +1489,11 @@ export class StellarService {
 
     const query = this.server.strictSendPaths(srcAsset, sourceAmount, destination).limit(5);
 
-    const result = await query.call();
-    return result.records as unknown[];
+    return validateHorizonPathsPage(
+      await query.call(),
+      "strictSendPaths",
+      this.maxResponseBytes
+    );
   }
 
   async findStrictReceivePaths(params: {
@@ -1400,8 +1509,11 @@ export class StellarService {
 
     const query = this.server.strictReceivePaths(source, destAst, destinationAmount).limit(5);
 
-    const result = await query.call();
-    return result.records as unknown[];
+    return validateHorizonPathsPage(
+      await query.call(),
+      "strictReceivePaths",
+      this.maxResponseBytes
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -1492,7 +1604,10 @@ export class StellarService {
     feeBumpTx.sign(feeKeypair);
 
     try {
-      return await this.server.submitTransaction(feeBumpTx);
+      return validateHorizonSubmitResponse(
+        await this.server.submitTransaction(feeBumpTx),
+        this.maxResponseBytes
+      );
     } catch (err) {
       throw translateSubmissionError(err, feePublicKey);
     }
@@ -1516,7 +1631,10 @@ export class StellarService {
     }
 
     try {
-      return await this.server.submitTransaction(tx);
+      return validateHorizonSubmitResponse(
+        await this.server.submitTransaction(tx),
+        this.maxResponseBytes
+      );
     } catch (err) {
       const sourcePublicKey = tx.source;
       throw translateSubmissionError(err, sourcePublicKey);
@@ -1535,11 +1653,12 @@ export class StellarService {
     signers: Array<{ key: string; weight: number }>;
   }> {
     const account = await this.getAccount(publicKey);
+    const validated = validateHorizonAccountThresholds(account, this.maxResponseBytes);
     return {
-      lowThreshold: account.thresholds.low_threshold,
-      mediumThreshold: account.thresholds.med_threshold,
-      highThreshold: account.thresholds.high_threshold,
-      signers: (account as unknown as { signers?: Array<{ key: string; weight: number }> }).signers ?? [],
+      lowThreshold: validated.thresholds.low_threshold,
+      mediumThreshold: validated.thresholds.med_threshold,
+      highThreshold: validated.thresholds.high_threshold,
+      signers: (validated.signers ?? []).map((s) => ({ key: s.key, weight: s.weight })),
     };
   }
 }
@@ -1566,27 +1685,43 @@ function assertMemoProvided(destinationPublicKey: string, requiresMemo: boolean,
 
 /** SEP-29: `config.memo_required` data entry set to "1" (base64 "MQ=="). */
 export function accountRequiresMemo(account: StellarSdk.Horizon.AccountResponse): boolean {
-  const data = account.data_attr as Record<string, string> | undefined;
-  return data?.["config.memo_required"] === "MQ==";
+  const data = (account as unknown as { data_attr?: unknown }).data_attr;
+  if (data === undefined) return false;
+  if (typeof data !== "object" || data === null || Array.isArray(data)) {
+    throw new UpstreamValidationError("horizon", "loadAccount.data_attr", [
+      {
+        path: "data_attr",
+        message: "data_attr must be a string map",
+        code: "invalid_type",
+      },
+    ]);
+  }
+  const memoFlag = (data as Record<string, unknown>)["config.memo_required"];
+  if (memoFlag !== undefined && typeof memoFlag !== "string") {
+    throw new UpstreamValidationError("horizon", "loadAccount.data_attr", [
+      {
+        path: "data_attr.config.memo_required",
+        message: "config.memo_required must be a base64 string",
+        code: "invalid_type",
+      },
+    ]);
+  }
+  return memoFlag === "MQ==";
 }
 
-/** The subset of a Horizon balance line the precheck reads. */
-interface BalanceLine {
-  asset_type: string;
-  asset_code?: string;
-  asset_issuer?: string;
-  balance: string;
-  selling_liabilities?: string;
-  sponsor?: string;
-  is_authorized?: boolean;
-}
+type CreditBalanceLine = Extract<
+  ValidatedHorizonBalanceLine,
+  { asset_type: "credit_alphanum4" | "credit_alphanum12" }
+>;
 
 function findTrustline(
   account: StellarSdk.Horizon.AccountResponse,
-  asset: StellarSdk.Asset
-): BalanceLine | undefined {
-  return (account.balances as unknown as BalanceLine[]).find(
-    (b) =>
+  asset: StellarSdk.Asset,
+  maxBytes = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES
+): CreditBalanceLine | undefined {
+  const balances = validateHorizonAccountBalances(account, maxBytes);
+  return balances.find(
+    (b): b is CreditBalanceLine =>
       (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") &&
       b.asset_code === asset.getCode() &&
       b.asset_issuer === asset.getIssuer()
@@ -1601,21 +1736,27 @@ function findTrustline(
  */
 export function spendableBalance(
   account: StellarSdk.Horizon.AccountResponse,
-  asset: StellarSdk.Asset
+  asset: StellarSdk.Asset,
+  maxBytes = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES
 ): string | undefined {
-  if (!asset.isNative() && asset.getIssuer() === account.account_id) {
+  const resolvedAccountId =
+    typeof account.accountId === "function" ? account.accountId() : account.account_id;
+  if (!asset.isNative() && asset.getIssuer() === resolvedAccountId) {
     return "922337203685.4775807";
   }
 
   if (asset.isNative()) {
-    const native = (account.balances as unknown as BalanceLine[]).find((b) => b.asset_type === "native");
+    const validated = validateHorizonAccountReserves(account, maxBytes);
+    const native = validated.balances.find(
+      (b): b is Extract<ValidatedHorizonBalanceLine, { asset_type: "native" }> =>
+        b.asset_type === "native"
+    );
     if (!native) return undefined;
-    const extra = account as unknown as { num_sponsoring?: number; num_sponsored?: number };
     const entries =
       2n +
-      BigInt(account.subentry_count) +
-      BigInt(extra.num_sponsoring ?? 0) -
-      BigInt(extra.num_sponsored ?? 0);
+      BigInt(validated.subentry_count) +
+      BigInt(validated.num_sponsoring ?? 0) -
+      BigInt(validated.num_sponsored ?? 0);
     const reserve = entries * toStroops(BASE_RESERVE);
     const liabilities = toStroops(native.selling_liabilities ?? "0");
     const available =
@@ -1623,7 +1764,7 @@ export function spendableBalance(
     return fromStroops(available > 0n ? available : 0n);
   }
 
-  const line = findTrustline(account, asset);
+  const line = findTrustline(account, asset, maxBytes);
   if (!line) return undefined;
   const available = toStroops(line.balance) - toStroops(line.selling_liabilities ?? "0");
   return fromStroops(available > 0n ? available : 0n);

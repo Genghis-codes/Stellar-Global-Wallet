@@ -14,6 +14,15 @@ import {
 } from "./sorobanCache";
 import { SourceAccountNotFoundError, TransactionExpiredError } from "./stellarErrors";
 import {
+  installUpstreamHttpGuards,
+  isUpstreamValidationFailure,
+  validateSorobanAccount,
+  validateSorobanGetTransaction,
+  validateSorobanLatestLedger,
+  validateSorobanSendTransaction,
+  validateSorobanSimulation,
+} from "./upstreamValidation";
+import {
   assertNotExpired,
   BUILD_TIMEOUT_SECONDS,
   describeUnsignedTransaction,
@@ -87,10 +96,18 @@ export function buildRestoreTransaction(
 export class SorobanService {
   private readonly server: StellarSdk.rpc.Server;
   private readonly networkPassphrase: string;
+  private readonly maxResponseBytes: number;
 
-  constructor() {
+  constructor(options?: { maxResponseBytes?: number }) {
     this.networkPassphrase = config.SOROBAN_NETWORK_PASSPHRASE;
+    this.maxResponseBytes =
+      options?.maxResponseBytes ?? config.SOROBAN_RPC_MAX_RESPONSE_BYTES;
     this.server = new rpc.Server(config.SOROBAN_RPC_URL);
+    installUpstreamHttpGuards(
+      "soroban_rpc",
+      (this.server as unknown as { httpClient?: unknown }).httpClient,
+      this.maxResponseBytes
+    );
   }
 
   /**
@@ -122,13 +139,22 @@ export class SorobanService {
     // doesn't exist on-chain — same fallback as buildUnsignedTransaction.
     let sourceAccount: StellarSdk.Account;
     try {
-      sourceAccount = await this.server.getAccount(sourcePublicKey);
-    } catch {
+      sourceAccount = validateSorobanAccount(
+        await this.server.getAccount(sourcePublicKey),
+        this.maxResponseBytes
+      );
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       sourceAccount = new StellarSdk.Account(sourcePublicKey, "0");
     }
     const tx = this.buildInvocation(sourceAccount, contractId, method, args);
 
-    const sim = await this.server.simulateTransaction(tx);
+    const sim = validateSorobanSimulation(
+      await this.server.simulateTransaction(tx),
+      this.maxResponseBytes
+    );
     if (rpc.Api.isSimulationError(sim)) {
       throw new SorobanSimulationError(
         `Simulation failed for ${contractId}.${method}: ${sim.error}`,
@@ -157,11 +183,14 @@ export class SorobanService {
     const { contractId, method, args, sourceSecretKey } = params;
     const keypair = StellarSdk.Keypair.fromSecret(sourceSecretKey);
     const sourcePublicKey = keypair.publicKey();
-    
+
     // Mark this user as having a pending transaction (read-your-writes)
     await markPendingTransaction(sourcePublicKey);
-    
-    let sourceAccount = await this.server.getAccount(keypair.publicKey());
+
+    let sourceAccount = validateSorobanAccount(
+      await this.server.getAccount(sourcePublicKey),
+      this.maxResponseBytes
+    );
     let tx = this.buildInvocation(sourceAccount, contractId, method, args);
 
     // Simulation-before-submission: this is what lets us reject a doomed
@@ -169,7 +198,10 @@ export class SorobanService {
     // SpendLimitExceeded) before ever paying network fees or waiting on
     // ledger close. sendTransaction is never reached below this point on a
     // failed simulation.
-    let sim = await this.server.simulateTransaction(tx);
+    let sim = validateSorobanSimulation(
+      await this.server.simulateTransaction(tx),
+      this.maxResponseBytes
+    );
     if (rpc.Api.isSimulationError(sim)) {
       // Transaction failed before submission - clear the pending flag
       await clearPendingTransaction(sourcePublicKey);
@@ -183,9 +215,15 @@ export class SorobanService {
     // rebuild and re-simulate against the restored state.
     if (rpc.Api.isSimulationRestore(sim)) {
       await this.submitRestore(keypair, sim.restorePreamble);
-      sourceAccount = await this.server.getAccount(keypair.publicKey());
+      sourceAccount = validateSorobanAccount(
+        await this.server.getAccount(sourcePublicKey),
+        this.maxResponseBytes
+      );
       tx = this.buildInvocation(sourceAccount, contractId, method, args);
-      sim = await this.server.simulateTransaction(tx);
+      sim = validateSorobanSimulation(
+        await this.server.simulateTransaction(tx),
+        this.maxResponseBytes
+      );
       if (rpc.Api.isSimulationError(sim)) {
         // Transaction failed after restore - clear the pending flag
         await clearPendingTransaction(sourcePublicKey);
@@ -199,7 +237,10 @@ export class SorobanService {
     const prepared = rpc.assembleTransaction(tx, sim).build();
     prepared.sign(keypair);
 
-    const send = await this.server.sendTransaction(prepared);
+    const send = validateSorobanSendTransaction(
+      await this.server.sendTransaction(prepared),
+      this.maxResponseBytes
+    );
     if (send.status === "ERROR") {
       // Transaction rejected before ledger entry - clear the pending flag
       await clearPendingTransaction(sourcePublicKey);
@@ -285,13 +326,19 @@ export class SorobanService {
     hash: string
   ): Promise<StellarSdk.rpc.Api.GetTransactionResponse> {
     const deadline = Date.now() + POLL_TIMEOUT_MS;
-    let response = await this.server.getTransaction(hash);
+    let response = validateSorobanGetTransaction(
+      await this.server.getTransaction(hash),
+      this.maxResponseBytes
+    );
     while (
       response.status === rpc.Api.GetTransactionStatus.NOT_FOUND &&
       Date.now() < deadline
     ) {
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-      response = await this.server.getTransaction(hash);
+      response = validateSorobanGetTransaction(
+        await this.server.getTransaction(hash),
+        this.maxResponseBytes
+      );
     }
     return response;
   }
@@ -313,8 +360,14 @@ export class SorobanService {
 
     let sourceAccount: StellarSdk.Account;
     try {
-      sourceAccount = await this.server.getAccount(sourcePublicKey);
+      sourceAccount = validateSorobanAccount(
+        await this.server.getAccount(sourcePublicKey),
+        this.maxResponseBytes
+      );
     } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       if (err instanceof Error && /account not found/i.test(err.message)) {
         throw new SourceAccountNotFoundError(sourcePublicKey);
       }
@@ -324,8 +377,14 @@ export class SorobanService {
     const tx = this.buildInvocation(sourceAccount, contractId, method, args, BUILD_TIMEOUT_SECONDS);
     let sim: StellarSdk.rpc.Api.SimulateTransactionResponse;
     try {
-      sim = await this.server.simulateTransaction(tx);
-    } catch {
+      sim = validateSorobanSimulation(
+        await this.server.simulateTransaction(tx),
+        this.maxResponseBytes
+      );
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       throw new SorobanUnavailableError();
     }
     if (rpc.Api.isSimulationError(sim)) {
@@ -390,20 +449,26 @@ export class SorobanService {
     const startTime = Date.now();
     let send: StellarSdk.rpc.Api.SendTransactionResponse;
     try {
-      send = await withSpan(
-        "soroban_rpc.send_transaction",
-        {
-          "rpc.system": "soroban_rpc",
-          "stellar.network": this.networkPassphrase,
-          "stellar.tx_hash": parsed.hash,
-        },
-        () => this.server.sendTransaction(parsed.transaction)
+      send = validateSorobanSendTransaction(
+        await withSpan(
+          "soroban_rpc.send_transaction",
+          {
+            "rpc.system": "soroban_rpc",
+            "stellar.network": this.networkPassphrase,
+            "stellar.tx_hash": parsed.hash,
+          },
+          () => this.server.sendTransaction(parsed.transaction)
+        ),
+        this.maxResponseBytes
       );
     } catch (err) {
       metrics.submissionsTotal.inc({ status: "failed", route: "contract_submit" });
       metrics.submissionDurationMs.observe(Date.now() - startTime);
       // Clear pending flag if send fails
       await clearPendingTransaction(sourcePublicKey);
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       throw new SorobanUnavailableError();
     }
 
@@ -455,19 +520,31 @@ export class SorobanService {
     const { contractId, method, args, sourcePublicKey } = params;
     let sourceAccount: StellarSdk.Account;
     try {
-      sourceAccount = await this.server.getAccount(sourcePublicKey);
-    } catch {
+      sourceAccount = validateSorobanAccount(
+        await this.server.getAccount(sourcePublicKey),
+        this.maxResponseBytes
+      );
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       sourceAccount = new StellarSdk.Account(sourcePublicKey, "0");
     }
     const tx = this.buildInvocation(sourceAccount, contractId, method, args);
 
     try {
-      const sim = await this.server.simulateTransaction(tx);
+      const sim = validateSorobanSimulation(
+        await this.server.simulateTransaction(tx),
+        this.maxResponseBytes
+      );
       if (!rpc.Api.isSimulationError(sim)) {
         const prepared = rpc.assembleTransaction(tx, sim).build();
         return prepared.toXDR();
       }
-    } catch {
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       // Fall back to invocation transaction if simulation is not supported
     }
 
@@ -495,7 +572,10 @@ export class SorobanService {
    * Returns the latest ledger sequence from Soroban RPC.
    */
   async getLatestLedger(): Promise<number> {
-    const latest = await this.server.getLatestLedger();
+    const latest = validateSorobanLatestLedger(
+      await this.server.getLatestLedger(),
+      this.maxResponseBytes
+    );
     return latest.sequence;
   }
 }

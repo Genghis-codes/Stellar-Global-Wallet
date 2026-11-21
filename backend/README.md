@@ -81,6 +81,18 @@ feature availability, and API/client versions. The response is cached for
 60 seconds. Contract IDs are `null` when that contract is not configured;
 the endpoint never serializes the complete server configuration or secrets.
 
+## Upstream Horizon and Soroban RPC validation
+
+Responses from `HORIZON_URL` and `SOROBAN_RPC_URL` are validated at runtime with
+`zod` schemas and bounded by `HORIZON_MAX_RESPONSE_BYTES` and
+`SOROBAN_RPC_MAX_RESPONSE_BYTES` (both default to `2097152` bytes / 2 MiB, with
+a maximum of `200` records per page). Malformed or oversized upstream payloads
+fail closed with HTTP `502` (`HORIZON_ERROR` or `SOROBAN_ERROR`,
+`retryable: false`) in the shared error envelope rather than propagating
+untyped casts or `500` errors. See
+[`docs/upstream-validation.md`](./docs/upstream-validation.md) for the threat
+model and schema coverage.
+
 ## Trustlines and wallet asset registry
 
 - `POST /api/v1/wallet/trustline/build` returns unsigned `changeTrust` XDR.
