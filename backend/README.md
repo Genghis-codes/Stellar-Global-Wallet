@@ -20,6 +20,18 @@ npm run type-check
 Postgres and Redis are expected at the URLs in `.env`; `docker compose up
 -d postgres redis` from the repo root starts both.
 
+### Row-level security (RLS)
+
+All user-scoped Postgres tables (`devices`, `verified_emails`,
+`user_preferences`, `sessions`, `idempotency_keys`, and `pending_txs`) enforce
+PostgreSQL Row-Level Security (`ENABLE` + `FORCE ROW LEVEL SECURITY`).
+Authenticated requests bind `app.account` per transaction via
+`withAccountContext` (`set_config('app.account', $1, true)` / `SET LOCAL`),
+unscoped queries return zero rows, and background workers (`paymentNotifier`,
+`recoveryNotifier`) opt in explicitly via `withServiceRole`. See
+[`docs/rls.md`](./docs/rls.md) for policy definitions, database roles, and
+failure modes.
+
 ## API documentation
 
 The OpenAPI 3.1 contract lives in [`openapi.yaml`](./openapi.yaml). When the docs

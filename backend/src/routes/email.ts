@@ -10,7 +10,8 @@
  */
 
 import { Router } from "express";
-import { body, query } from "express-validator";
+import { body } from "express-validator";
+import { withAccountContext } from "../db";
 import { jwtAuth } from "../middleware/jwtAuth";
 import { assertValidRequest } from "../middleware/requestValidation";
 import {
@@ -34,7 +35,9 @@ emailRouter.post(
       const account = req.user!.sub;
       const locale = req.locale ?? "en";
 
-      await sendVerificationEmail(account, email, locale);
+      await withAccountContext(account, (tx) =>
+        sendVerificationEmail(account, email, locale, tx)
+      );
       res.status(202).json({
         message: "Verification email sent. Please check your inbox.",
       });
@@ -52,7 +55,8 @@ emailRouter.post(
     try {
       assertValidRequest(req);
       const { token } = req.body as { token: string };
-      const { email } = await verifyToken(token);
+      const account = req.user!.sub;
+      const { email } = await withAccountContext(account, (tx) => verifyToken(token, tx));
       res.json({ message: "Email verified successfully.", email });
     } catch (err) {
       next(err);
@@ -64,7 +68,7 @@ emailRouter.post(
 emailRouter.get("/", async (req, res, next) => {
   try {
     const account = req.user!.sub;
-    const email = await getVerifiedEmail(account);
+    const email = await withAccountContext(account, (tx) => getVerifiedEmail(account, tx));
     res.json({ email, verified: email !== null });
   } catch (err) {
     next(err);

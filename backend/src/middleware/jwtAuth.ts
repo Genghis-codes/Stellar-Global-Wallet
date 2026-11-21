@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { TokenExpiredError } from "jsonwebtoken";
+import { runWithRequestAccount } from "../rlsContext";
 import { verifyAccessToken } from "../utils/jwt";
 import { UnauthorizedError } from "../errors/appError";
 import { sessionStore } from "../services/sessionStore";
@@ -41,7 +42,9 @@ export async function jwtAuth(req: Request, res: Response, next: NextFunction) {
     }
 
     req.user = { sub: payload.sub };
-    next();
+    runWithRequestAccount(payload.sub, () => {
+      next();
+    });
   } catch (err) {
     // Clients refresh only on TOKEN_EXPIRED; anything else (bad signature,
     // malformed token) means signing in again.

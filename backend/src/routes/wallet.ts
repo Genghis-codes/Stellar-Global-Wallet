@@ -24,6 +24,7 @@ import {
   memoTextMessage,
 } from "@globe-wallet/sdk";
 import * as StellarSdk from "@stellar/stellar-sdk";
+import { withAccountContext } from "../db";
 import {
   claimIdempotencyKey,
   commitIdempotencyResult,
@@ -123,8 +124,12 @@ async function handleIdempotentRequest(
       // Bind the key to the request body so the same key cannot be reused
       // for a different payload (#198 — request fingerprint).
       fingerprint = requestFingerprint(req.body);
+      const ownerKey = sourcePublicKey;
+      const fp = fingerprint;
 
-      const claim = await claimIdempotencyKey(sourcePublicKey, idempotencyKey, fingerprint);
+      const claim = await withAccountContext(ownerKey, (tx) =>
+        claimIdempotencyKey(ownerKey, idempotencyKey, fp, tx)
+      );
 
       if (claim.status === "hit") {
         res.json({ hash: claim.result.hash, successful: claim.result.successful });
@@ -159,18 +164,26 @@ async function handleIdempotentRequest(
     } catch (execErr) {
       // Release the sentinel so the client can retry with the same key.
       if (sourcePublicKey && idempotencyKey) {
-        await releaseIdempotencyKey(sourcePublicKey, idempotencyKey);
+        const ownerKey = sourcePublicKey;
+        await withAccountContext(ownerKey, (tx) =>
+          releaseIdempotencyKey(ownerKey, idempotencyKey, tx)
+        );
       }
       throw execErr;
     }
 
     if (sourcePublicKey && idempotencyKey && fingerprint) {
-      await commitIdempotencyResult(
-        sourcePublicKey,
-        idempotencyKey,
-        fingerprint,
-        result.hash,
-        result.successful
+      const ownerKey = sourcePublicKey;
+      const fp = fingerprint;
+      await withAccountContext(ownerKey, (tx) =>
+        commitIdempotencyResult(
+          ownerKey,
+          idempotencyKey,
+          fp,
+          result.hash,
+          result.successful,
+          tx
+        )
       );
     }
 

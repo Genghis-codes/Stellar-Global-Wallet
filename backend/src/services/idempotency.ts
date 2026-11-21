@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { pool } from "../db";
+import { pool, Queryable } from "../db";
 import { AppError } from "../errors/appError";
 
 /** Cached results are replayed for 24 hours; after that the key is free to reuse. */
@@ -40,7 +40,8 @@ export function requestFingerprint(body: unknown): string {
 export async function claimIdempotencyKey(
   sourcePublicKey: string,
   idempotencyKey: string,
-  fingerprint: string
+  fingerprint: string,
+  db: Queryable = pool
 ): Promise<
   | { status: "hit"; result: IdempotencyResult }
   | { status: "claimed" }
@@ -48,7 +49,7 @@ export async function claimIdempotencyKey(
   | { status: "in-flight" }
 > {
   // Try to atomically insert a "pending" sentinel row.
-  const insert = await pool.query(
+  const insert = await db.query(
     `INSERT INTO idempotency_keys
        (source_public_key, idempotency_key, request_fingerprint, result_hash, result_successful, committed)
      VALUES ($1, $2, $3, '', false, false)
@@ -63,7 +64,7 @@ export async function claimIdempotencyKey(
   }
 
   // A row already exists. Inspect it.
-  const existing = await pool.query(
+  const existing = await db.query(
     `SELECT request_fingerprint, result_hash, result_successful, committed, created_at
      FROM idempotency_keys
      WHERE source_public_key = $1 AND idempotency_key = $2`,
@@ -87,7 +88,7 @@ export async function claimIdempotencyKey(
   // Expired rows are stale; delete and let the caller re-claim.
   const ageMs = Date.now() - row.created_at.getTime();
   if (ageMs > 24 * 60 * 60 * 1000) {
-    await pool.query(
+    await db.query(
       `DELETE FROM idempotency_keys
        WHERE source_public_key = $1 AND idempotency_key = $2 AND created_at = $3`,
       [sourcePublicKey, idempotencyKey, row.created_at]
@@ -120,9 +121,10 @@ export async function commitIdempotencyResult(
   idempotencyKey: string,
   fingerprint: string,
   hash: string,
-  successful: boolean
+  successful: boolean,
+  db: Queryable = pool
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     `UPDATE idempotency_keys
      SET result_hash = $4, result_successful = $5, committed = true
      WHERE source_public_key = $1 AND idempotency_key = $2 AND request_fingerprint = $3`,
@@ -136,9 +138,10 @@ export async function commitIdempotencyResult(
  */
 export async function releaseIdempotencyKey(
   sourcePublicKey: string,
-  idempotencyKey: string
+  idempotencyKey: string,
+  db: Queryable = pool
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     `DELETE FROM idempotency_keys
      WHERE source_public_key = $1 AND idempotency_key = $2 AND committed = false`,
     [sourcePublicKey, idempotencyKey]
@@ -153,9 +156,10 @@ export async function releaseIdempotencyKey(
 /** @deprecated Use claimIdempotencyKey + commitIdempotencyResult instead. */
 export async function getCachedResult(
   sourcePublicKey: string,
-  idempotencyKey: string
+  idempotencyKey: string,
+  db: Queryable = pool
 ): Promise<IdempotencyResult | null> {
-  const result = await pool.query(
+  const result = await db.query(
     `SELECT result_hash, result_successful FROM idempotency_keys
      WHERE source_public_key = $1 AND idempotency_key = $2
        AND committed = true AND created_at > NOW() - ${TTL_SQL}`,
@@ -175,9 +179,10 @@ export async function cacheResult(
   sourcePublicKey: string,
   idempotencyKey: string,
   hash: string,
-  successful: boolean
+  successful: boolean,
+  db: Queryable = pool
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     `INSERT INTO idempotency_keys
        (source_public_key, idempotency_key, request_fingerprint, result_hash, result_successful, committed)
      VALUES ($1, $2, '', $3, $4, true)

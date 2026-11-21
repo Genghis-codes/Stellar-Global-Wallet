@@ -15,6 +15,7 @@
 
 import { Router } from "express";
 import { body, param } from "express-validator";
+import { withAccountContext } from "../db";
 import { jwtAuth } from "../middleware/jwtAuth";
 import { assertValidRequest } from "../middleware/requestValidation";
 import { NotFoundError, ValidationError } from "../errors/appError";
@@ -80,7 +81,9 @@ devicesRouter.post(
       }
 
       const account = req.user!.sub;
-      const device = await upsertDevice(account, platform, token, locale);
+      const device = await withAccountContext(account, (tx) =>
+        upsertDevice(account, platform, token, locale, tx)
+      );
 
       res.status(201).json({ device });
     } catch (err) {
@@ -97,7 +100,9 @@ devicesRouter.delete(
       assertValidRequest(req);
 
       const account = req.user!.sub;
-      const deleted = await deleteDevice(account, req.params.id);
+      const deleted = await withAccountContext(account, (tx) =>
+        deleteDevice(account, req.params.id, tx)
+      );
 
       if (!deleted) {
         throw new NotFoundError("Device not found", "DEVICE_NOT_FOUND");

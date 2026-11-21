@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { body, param, query } from "express-validator";
 import { config } from "../config";
-import { pool } from "../db";
+import { rawPool } from "../db";
 import { AppError, ForbiddenError, NotFoundError } from "../errors/appError";
 import { jwtAuth } from "../middleware/jwtAuth";
 import { assertValidRequest } from "../middleware/requestValidation";
@@ -37,11 +37,21 @@ type SignerSource = Pick<StellarService, "getAccountThresholds">;
  */
 export function createPendingTxRouter(
   stellar: SignerSource,
-  store: PendingTxStore = new PgPendingTxStore(pool),
+  store: PendingTxStore = new PgPendingTxStore(rawPool),
   networkPassphrase: string = config.NETWORK_PASSPHRASE
 ): Router {
   const router = Router();
   router.use(jwtAuth);
+
+  function inAccountScope<T>(
+    account: string,
+    fn: (scoped: PendingTxStore) => Promise<T>
+  ): Promise<T> {
+    if (store.withAccountScope) {
+      return store.withAccountScope(account, fn);
+    }
+    return fn(store);
+  }
 
   async function signersOf(account: string): Promise<AccountSigners> {
     try {
@@ -70,7 +80,9 @@ export function createPendingTxRouter(
   }
 
   async function load(id: string, sub: string) {
-    const row = await store.get(id);
+    const row = store.getForSignerCheck
+      ? await store.getForSignerCheck(id)
+      : await store.get(id);
     if (!row) throw new NotFoundError("Pending transaction not found");
     const account = await signersOf(row.account);
     assertSigner(account, sub);
@@ -87,15 +99,17 @@ export function createPendingTxRouter(
 
       const required = requiredWeightFor(tx, account);
       const signers = verifiedSigners(tx, account);
-      const row = await store.create({
-        account: tx.source,
-        xdr: tx.toXDR(),
-        requiredWeight: required,
-        collectedSigners: signers,
-        createdBy: sub,
-        expiresAt: expiryOf(tx),
-        status: weightOf(signers, account) >= required ? "ready" : "pending",
-      });
+      const row = await inAccountScope(tx.source, (scoped) =>
+        scoped.create({
+          account: tx.source,
+          xdr: tx.toXDR(),
+          requiredWeight: required,
+          collectedSigners: signers,
+          createdBy: sub,
+          expiresAt: expiryOf(tx),
+          status: weightOf(signers, account) >= required ? "ready" : "pending",
+        })
+      );
       res.status(201).json(view(row, account));
     } catch (err) {
       next(err);
@@ -111,7 +125,9 @@ export function createPendingTxRouter(
         const accountId = String(req.query.account);
         const account = await signersOf(accountId);
         assertSigner(account, req.user!.sub);
-        const rows = await store.listForAccount(accountId);
+        const rows = await inAccountScope(accountId, (scoped) =>
+          scoped.listForAccount(accountId)
+        );
         res.json({ items: rows.map((row) => view(row, account)) });
       } catch (err) {
         next(err);
@@ -146,11 +162,13 @@ export function createPendingTxRouter(
           parseClassicTransaction(req.body.xdr, networkPassphrase)
         );
         const signers = verifiedSigners(merged, account);
-        const updated = await store.update(row.id, {
-          xdr: merged.toXDR(),
-          collectedSigners: signers,
-          status: weightOf(signers, account) >= row.requiredWeight ? "ready" : "pending",
-        });
+        const updated = await inAccountScope(row.account, (scoped) =>
+          scoped.update(row.id, {
+            xdr: merged.toXDR(),
+            collectedSigners: signers,
+            status: weightOf(signers, account) >= row.requiredWeight ? "ready" : "pending",
+          })
+        );
         res.json(view(updated, account));
       } catch (err) {
         next(err);
@@ -164,11 +182,13 @@ export function createPendingTxRouter(
       if (row.createdBy !== req.user!.sub) {
         throw new ForbiddenError("Only the creator can cancel a pending transaction");
       }
-      const updated = await store.update(row.id, {
-        xdr: row.xdr,
-        collectedSigners: row.collectedSigners,
-        status: "cancelled",
-      });
+      const updated = await inAccountScope(row.account, (scoped) =>
+        scoped.update(row.id, {
+          xdr: row.xdr,
+          collectedSigners: row.collectedSigners,
+          status: "cancelled",
+        })
+      );
       res.json(view(updated, account));
     } catch (err) {
       next(err);

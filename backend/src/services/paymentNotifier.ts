@@ -20,7 +20,7 @@
 
 import { createClient } from "redis";
 import { config } from "../config";
-import { pool } from "../db";
+import { withServiceRole } from "../db";
 import { getDevicesForAccounts } from "./deviceRegistry";
 import { sendPushToAll } from "./pushSender";
 import { tNotification } from "./i18nHelper";
@@ -84,8 +84,9 @@ export async function startPaymentNotifier(): Promise<void> {
 
 async function runStream(): Promise<void> {
   // Fetch all accounts that currently have at least one registered device.
-  const { rows } = await pool.query<{ account: string }>(
-    `SELECT DISTINCT account FROM devices`
+  const { rows } = await withServiceRole(
+    (tx) => tx.query<{ account: string }>(`SELECT DISTINCT account FROM devices`),
+    { jobName: "paymentNotifier.listAccounts" }
   );
   const accounts = rows.map((r) => r.account);
   if (accounts.length === 0) {
@@ -159,7 +160,10 @@ async function handlePayment(account: string, record: unknown): Promise<void> {
     return;
   }
 
-  const devices = await getDevicesForAccounts([account]);
+  const devices = await withServiceRole(
+    (tx) => getDevicesForAccounts([account], tx),
+    { jobName: "paymentNotifier.handlePayment" }
+  );
   if (devices.length === 0) return;
 
   const assetLabel =

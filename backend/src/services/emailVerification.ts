@@ -27,8 +27,7 @@
  */
 
 import crypto from "crypto";
-import { Pool } from "pg";
-import { pool } from "../db";
+import { pool, Queryable } from "../db";
 import { getEmailProvider } from "./emailNotifier";
 import { tNotification } from "./i18nHelper";
 import { AppError } from "../errors/appError";
@@ -38,7 +37,7 @@ const BASE_URL = process.env.BASE_URL ?? "https://app.globewallet.app";
 
 // ── Table bootstrap ────────────────────────────────────────────────────────
 
-export async function ensureVerifiedEmailsTable(db: Pool = pool): Promise<void> {
+export async function ensureVerifiedEmailsTable(db: Queryable = pool): Promise<void> {
   await db.query(`
     CREATE TABLE IF NOT EXISTS verified_emails (
       id               BIGSERIAL     PRIMARY KEY,
@@ -98,7 +97,7 @@ export async function sendVerificationEmail(
   account: string,
   rawEmail: string,
   locale = "en",
-  db: Pool = pool
+  db: Queryable = pool
 ): Promise<void> {
   const email = normaliseEmail(rawEmail);
   const token = crypto.randomBytes(32).toString("hex");
@@ -140,7 +139,7 @@ export async function sendVerificationEmail(
  * Confirms a verification token. Marks the email as verified on success.
  * Throws EmailTokenInvalidError or EmailTokenExpiredError on failure.
  */
-export async function verifyToken(token: string, db: Pool = pool): Promise<{ account: string; email: string }> {
+export async function verifyToken(token: string, db: Queryable = pool): Promise<{ account: string; email: string }> {
   const { rows } = await db.query<{
     account: string;
     email: string;
@@ -180,7 +179,7 @@ export async function verifyToken(token: string, db: Pool = pool): Promise<{ acc
  */
 export async function getVerifiedEmail(
   account: string,
-  db: Pool = pool
+  db: Queryable = pool
 ): Promise<string | null> {
   const { rows } = await db.query<{ email: string; verified: boolean }>(
     `SELECT email, verified FROM verified_emails WHERE account = $1`,
