@@ -56,7 +56,11 @@ function assetLabel(op: Record<string, unknown>): string {
 }
 
 /** Map one Horizon payment-shaped operation onto a statement row. */
-export function toCsvRow(account: string, record: PaymentExportRecord): CsvRow {
+export function toCsvRow(
+  account: string,
+  record: PaymentExportRecord,
+  fxRate?: { rate: string; source: string; snapshotDate: string | null }
+): CsvRow {
   const op = record.op as unknown as Record<string, unknown>;
   const tx = record.transaction;
 
@@ -105,7 +109,8 @@ export function toCsvRow(account: string, record: PaymentExportRecord): CsvRow {
     fee = fromStroops(BigInt(tx.fee_charged));
   }
 
-  return {
+  // Build CSV row with optional FX rate info
+  const row: CsvRow = {
     date: String(op.created_at ?? ""),
     type: String(op.type ?? ""),
     direction,
@@ -116,6 +121,29 @@ export function toCsvRow(account: string, record: PaymentExportRecord): CsvRow {
     fee,
     hash: String(op.transaction_hash ?? ""),
   };
+
+  // Add FX rate columns if provided
+  if (fxRate) {
+    row.fx_rate = fxRate.rate;
+    row.fx_source = fxRate.source;
+    row.fx_snapshot_date = fxRate.snapshotDate ?? "";
+  }
+
+  return row;
+}
+
+// Extended CSV columns when FX info is included
+export const CSV_COLUMNS_WITH_FX = [
+  ...CSV_COLUMNS,
+  "fx_rate",
+  "fx_source",
+  "fx_snapshot_date",
+] as const;
+
+export type CsvRowWithFx = CsvRow & Record<"fx_rate" | "fx_source" | "fx_snapshot_date", string>;
+
+export function toCsvLineWithFx(row: CsvRowWithFx): string {
+  return CSV_COLUMNS_WITH_FX.map((col) => escapeCsvCell(row[col])).join(",") + "\r\n";
 }
 
 /** Write honouring backpressure; rejects if the client disconnects mid-wait. */

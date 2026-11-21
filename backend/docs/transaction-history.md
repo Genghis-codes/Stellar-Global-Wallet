@@ -113,3 +113,23 @@ case-insensitive and defaults to `USD` (which never hits the network).
 - `price` is display precision (2 dp ≥ 1, else 7 dp) — never use it for
   settlement. The price oracle itself is still a placeholder, so `price` and
   `price_usd` are `null` until one is connected.
+
+## Historical conversions (#62)
+
+For transaction exports and historical analysis, the system uses the FX rate
+that was in effect **at the time of the transaction**, not the current rate.
+This is essential for tax reporting and accurate portfolio tracking over time.
+
+- **Storage:** Daily snapshots are stored in `fx_rate_snapshots` table
+  (migration `004_fx_rate_snapshots`). One row per currency pair per day.
+- **Backfill:** Use `npm run backfill:fx [days] [endDate]` to populate historical data.
+- **CSV export:** Added columns `fx_rate`, `fx_source`, `fx_snapshot_date`.
+- **API quotes:** Response includes `snapshotDate` field indicating if historical.
+
+See [fx-historical.md](./fx-historical.md) for full details.
+
+**Configuration:**
+
+```env
+FX_SNAPSHOT_CURRENCIES=EUR,GBP,NGN,KES,GHS
+```

@@ -14,7 +14,8 @@
     "type-check": "tsc --noEmit -p tsconfig.json",
     "migrate": "tsx src/migrations/cli.ts up",
     "migrate:down": "tsx src/migrations/cli.ts down",
-    "seed:demo": "tsx scripts/seed-demo-wallet.ts"
+    "seed:demo": "tsx scripts/seed-demo-wallet.ts",
+    "backfill:fx": "tsx scripts/backfillFxSnapshots.ts"
   },
   "dependencies": {
     "@globe-wallet/sdk": "^0.1.0",

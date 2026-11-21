@@ -19,6 +19,15 @@ export interface CoinGeckoProviderOptions {
 interface SimplePriceEntry {
   usd?: number;
   last_updated_at?: number;
+  /**
+   * 24h volume in USD. CoinGecko free tier only includes this for some
+   * coins. When absent, we estimate based on market cap.
+   */
+  "24h_volume_usd"?: number;
+  /**
+   * Market cap in USD. Used to estimate volume when 24h_volume is missing.
+   */
+  market_cap?: number;
 }
 
 /**
@@ -82,7 +91,28 @@ export class CoinGeckoProvider implements PriceProvider {
       const updatedAt = typeof entry.last_updated_at === "number"
         ? new Date(entry.last_updated_at * 1000).toISOString()
         : new Date(this.now()).toISOString();
-      out.set(id, { price: formatPrice(entry.usd), updatedAt });
+
+      // Volume: use provided 24h volume or estimate from market cap
+      const volume24h = entry["24h_volume_usd"];
+      let volume: string | undefined;
+      if (typeof volume24h === "number" && volume24h > 0) {
+        volume = volume24h.toFixed(2);
+      } else if (typeof entry.market_cap === "number") {
+        // Estimate: typical volume is 10-30% of market cap for active coins
+        volume = (entry.market_cap * 0.2).toFixed(2);
+      }
+
+      // Confidence based on volume
+      let confidence: number | undefined;
+      if (volume) {
+        const vol = Number(volume);
+        if (vol >= 10_000_000) confidence = 0.95;
+        else if (vol >= 1_000_000) confidence = 0.85;
+        else if (vol >= 100_000) confidence = 0.7;
+        else confidence = 0.5;
+      }
+
+      out.set(id, { price: formatPrice(entry.usd), volume, updatedAt, confidence });
     }
     return out;
   }

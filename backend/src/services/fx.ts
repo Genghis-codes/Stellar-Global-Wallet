@@ -1,17 +1,24 @@
 /**
- * Fiat FX rates for local-currency price display (#58).
+ * Fiat FX rates for local-currency price display and historical conversions.
  *
- * Rates are USD-based (one request returns every quote currency) and
+ * Current rates are USD-based (one request returns every quote currency) and
  * cached in-process for FX_CACHE_TTL_MS (default 1h) — FX moves slowly
  * relative to how often price routes are hit, and the free upstream is
- * rate-limited. Concurrent cache misses share one in-flight request. If a
- * refresh fails and a previous rate set exists, it's served with
+ * rate-limited. Concurrent cache misses share one in-flight request.
+ *
+ * For historical conversions (e.g., tax reporting), daily snapshots are
+ * stored in the database and used for transactions dated in the past.
+ *
+ * If a refresh fails and a previous rate set exists, it's served with
  * `stale: true` rather than failing the request; with nothing cached the
  * caller gets a retryable 503 FX_UNAVAILABLE.
  */
+import { Pool } from "pg";
 import { config } from "../config";
 import { AppError } from "../errors/appError";
 import { tError } from "./i18nHelper";
+import { FxRateSnapshot, FxSnapshotService } from "./fxSnapshot";
+import { FX_BASE_CURRENCY, type FiatCurrency, isSupportedCurrency } from "./fx";
 
 /**
  * Currencies accepted by `?currency=`. A fixed list (rather than "whatever
@@ -27,10 +34,28 @@ export const SUPPORTED_CURRENCIES = [
 
 export type FiatCurrency = (typeof SUPPORTED_CURRENCIES)[number];
 
-export const FX_BASE_CURRENCY: FiatCurrency = "USD";
+/**
+ *FX Quote with historical conversion context.
+ * Added for historical conversions.
+ */
+export interface HistoricalFxQuote extends FxQuote {
+  /**
+   * When the rate snapshot was taken (ISO 8601). Different from `updatedAt`
+   * when using historical snapshots.
+   */
+  snapshotDate: string | null;
+}
 
-export function isSupportedCurrency(value: string): value is FiatCurrency {
-  return (SUPPORTED_CURRENCIES as readonly string[]).includes(value);
+/**
+ * Quote with historical context (current or historical).
+ */
+export interface FxQuoteWithHistory {
+  quote: HistoricalFxQuote;
+  /**
+   * True when the rate was taken from a historical snapshot.
+   * When false, this is a live quote from the upstream.
+   */
+  isHistorical: boolean;
 }
 
 export class UnsupportedCurrencyError extends AppError {
@@ -66,18 +91,6 @@ export function parseCurrency(raw: unknown, locale = "en"): FiatCurrency {
   return value;
 }
 
-export interface FxQuote {
-  base: FiatCurrency;
-  quote: FiatCurrency;
-  /** Units of `quote` per 1 `base`, as a decimal string. */
-  rate: string;
-  source: string;
-  /** When the upstream last updated this rate (ISO 8601). */
-  updatedAt: string;
-  /** True when served from cache after a failed refresh. */
-  stale: boolean;
-}
-
 interface RateSet {
   rates: Record<string, number>;
   updatedAt: string;
@@ -98,14 +111,18 @@ export class FxService {
   private inflight: Promise<RateSet> | undefined;
 
   constructor(
+    private readonly pool: Pool,
     private readonly fetchFn: FetchFn = (url) => fetch(url),
     private readonly url: string = config.FX_API_URL,
     private readonly ttlMs: number = config.FX_CACHE_TTL_MS,
     private readonly now: () => number = Date.now
   ) {}
 
-  /** USD → `currency` rate. USD itself never hits the network. */
-  async getQuote(currency: FiatCurrency, locale = "en"): Promise<FxQuote> {
+  /**
+   * USD → `currency` rate for the current date. USD itself never hits the network.
+   * For historical rates, use `getHistoricalQuote`.
+   */
+  async getQuote(currency: FiatCurrency, locale = "en"): Promise<HistoricalFxQuote> {
     if (currency === FX_BASE_CURRENCY) {
       return {
         base: FX_BASE_CURRENCY,
@@ -114,6 +131,7 @@ export class FxService {
         source: "identity",
         updatedAt: new Date(this.now()).toISOString(),
         stale: false,
+        snapshotDate: null,
       };
     }
 
@@ -145,6 +163,54 @@ export class FxService {
       source: new URL(this.url).host,
       updatedAt: set.updatedAt,
       stale,
+      snapshotDate: null,
+    };
+  }
+
+  /**
+   * Get the FX rate for a specific date (for historical conversions).
+   * Falls back to current rate if no snapshot exists for the requested date.
+   */
+  async getHistoricalQuote(
+    date: Date,
+    currency: FiatCurrency,
+    locale = "en"
+  ): Promise<HistoricalFxQuote> {
+    if (currency === FX_BASE_CURRENCY) {
+      return {
+        base: FX_BASE_CURRENCY,
+        quote: currency,
+        rate: "1",
+        source: "identity",
+        updatedAt: new Date(this.now()).toISOString(),
+        stale: false,
+        snapshotDate: date.toISOString().slice(0, 10),
+      };
+    }
+
+    const snapshotService = new FxSnapshotService(this.pool);
+    const snapshotDate = date.toISOString().slice(0, 10);
+
+    // Try to get historical snapshot first
+    const historical = await snapshotService.getRateOnDate(snapshotDate, FX_BASE_CURRENCY, currency);
+
+    if (historical) {
+      return {
+        base: FX_BASE_CURRENCY,
+        quote: currency,
+        rate: historical.rate,
+        source: historical.source,
+        updatedAt: historical.createdAt,
+        stale: false,
+        snapshotDate: historical.date,
+      };
+    }
+
+    // No historical snapshot - use current live rate
+    const quote = await this.getQuote(currency, locale);
+    return {
+      ...quote,
+      snapshotDate: null, // Indicates we used the current rate
     };
   }
 

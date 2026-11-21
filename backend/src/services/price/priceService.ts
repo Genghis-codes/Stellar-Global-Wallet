@@ -1,15 +1,19 @@
 import { TtlCache } from "../ttlCache";
-import { PriceAsset, PriceProvider, PriceQuote, assetId } from "./types";
+import { PriceAsset, PriceProvider, PriceQuote, assetId, ProviderQuote } from "./types";
+import { computeConsensusPrice, ProviderContribution } from "./priceConsensus";
 
 /**
- * Spot prices with provider fallback and a shared TTL cache (#55, #56).
+ * Spot prices with provider fallback and consensus aggregation.
  *
- * For each asset not in the cache, providers are tried in order; the first
- * one that prices it wins. Providers receive every still-unpriced asset in
- * one call, so a batch of 50 misses costs one CoinGecko request rather
- * than 50. Concurrent requests for the same uncached asset share one
- * upstream lookup. Assets no provider can price are returned (and cached)
- * as `{ price: null, source: "unavailable" }`.
+ * For each asset not in the cache:
+ * 1. All providers try to price it (batched for efficiency)
+ * 2. Prices are combined using VWAP (for DEX) and median consensus (across providers)
+ * 3. Outliers are rejected, confidence is calculated
+ * 4. The consensus result is cached
+ *
+ * Providers receive every still-unpriced asset in one call, so a batch of
+ * 50 misses costs one CoinGecko request rather than 50. Concurrent
+ * requests for the same uncached asset share one upstream lookup.
  */
 export class PriceService {
   private readonly cache: TtlCache<PriceQuote>;
@@ -73,25 +77,66 @@ export class PriceService {
 
   private async resolve(assets: readonly PriceAsset[]): Promise<Map<string, PriceQuote>> {
     const result = new Map<string, PriceQuote>();
-    let remaining = [...assets];
+    const providerQuotes = new Map<string, Map<string, ProviderQuote & { provider: string }>>();
 
+    // Collect quotes from all providers
     for (const provider of this.providers) {
-      if (remaining.length === 0) break;
       try {
-        const quotes = await provider.getPrices(remaining);
+        const quotes = await provider.getPrices(assets);
+        const providerMap = new Map<string, ProviderQuote & { provider: string }>();
         for (const [id, quote] of quotes) {
-          result.set(id, { asset: id, price: quote.price, currency: "USD", source: provider.name, updatedAt: quote.updatedAt });
+          providerMap.set(id, { ...quote, provider: provider.name });
         }
+        providerQuotes.set(provider.name, providerMap);
       } catch (err) {
         console.error(`[price] provider ${provider.name} failed:`, (err as Error).message);
       }
-      remaining = remaining.filter((asset) => !result.has(assetId(asset)));
     }
 
-    for (const asset of remaining) {
+    // Aggregate for each asset
+    for (const asset of assets) {
       const id = assetId(asset);
-      result.set(id, { asset: id, price: null, currency: "USD", source: "unavailable", updatedAt: null });
+      const contributions: ProviderContribution[] = [];
+
+      for (const [providerName, quotes] of providerQuotes) {
+        const quote = quotes.get(id);
+        if (quote && quote.price) {
+          const price = Number(quote.price);
+          if (isFinite(price) && price > 0) {
+            contributions.push({
+              provider: providerName,
+              price,
+              volume: quote.volume,
+              confidence: quote.confidence,
+              updatedAt: quote.updatedAt,
+            });
+          }
+        }
+      }
+
+      const consensus = computeConsensusPrice(contributions);
+
+      if (consensus) {
+        result.set(id, {
+          asset: id,
+          price: consensus.price,
+          currency: "USD",
+          source: consensus.source,
+          updatedAt: consensus.updatedAt,
+          volume: consensus.volume,
+          confidence: consensus.confidence,
+        });
+      } else {
+        result.set(id, {
+          asset: id,
+          price: null,
+          currency: "USD",
+          source: "unavailable",
+          updatedAt: null,
+        });
+      }
     }
+
     for (const quote of result.values()) this.cache.set(quote.asset, quote);
     return result;
   }

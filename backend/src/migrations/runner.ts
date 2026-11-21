@@ -105,6 +105,36 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    name: "004_fx_rate_snapshots",
+    up: async (client) => {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS fx_rate_snapshots (
+          id BIGSERIAL PRIMARY KEY,
+          date DATE NOT NULL,
+          base_currency VARCHAR(3) NOT NULL,
+          quote_currency VARCHAR(3) NOT NULL,
+          rate DECIMAL(20, 10) NOT NULL,
+          source VARCHAR(255) NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (date, base_currency, quote_currency)
+        );
+
+        CREATE INDEX IF NOT EXISTS fx_rate_snapshots_date_currency_idx
+          ON fx_rate_snapshots (date, base_currency, quote_currency);
+
+        CREATE INDEX IF NOT EXISTS fx_rate_snapshots_date_idx
+          ON fx_rate_snapshots (date);
+      `);
+    },
+    down: async (client) => {
+      await client.query(`
+        DROP INDEX IF EXISTS fx_rate_snapshots_date_idx;
+        DROP INDEX IF EXISTS fx_rate_snapshots_date_currency_idx;
+        DROP TABLE IF EXISTS fx_rate_snapshots CASCADE;
+      `);
+    },
+  },
 ];
 
 export async function ensureMigrationTable(client: PoolClient): Promise<void> {
