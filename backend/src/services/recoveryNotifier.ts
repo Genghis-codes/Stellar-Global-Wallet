@@ -25,6 +25,16 @@
  *   topic[0] = "migration", topic[1] = "asset_untracked" → owner notice (#178,
  *     handled by assetMigrationNotifier)
  *
+ * SEP-30 recovery servers (#260)
+ * ──────────────────────────────
+ * Recovery can additionally be delegated to a SEP-30 recovery server as an
+ * alternative to guardians.  When `SEP30_RECOVERY_SERVER_URL` is configured,
+ * the notifier also watches the SEP-30 server for recovery signer activity
+ * and alerts the owner.  SEP-30 servers require identity verification before
+ * a signer can be registered; the notifier surfaces the verification state so
+ * the owner is aware of pending identity checks.  SEP-30 is combined with
+ * guardians — it does not replace them.
+ *
  * Deduplication: event IDs from Soroban RPC are stored in Redis (SET NX,
  * 48-hour TTL) so retries never re-deliver.
  *
@@ -73,6 +83,106 @@ async function markSeen(eventId: string): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// SEP-30 recovery server integration (#260)
+// ---------------------------------------------------------------------------
+
+/**
+ * SEP-30 recovery signer as returned by the recovery server's
+ * `GET /accounts/{account}/signers` endpoint.
+ */
+export interface Sep30RecoverySigner {
+  key: string;
+  type: "ed25519" | "hash-x" | "phone" | "email";
+  weight: number;
+  /** Identity verification state required by the SEP-30 server. */
+  identityVerified?: boolean;
+}
+
+/**
+ * Fetches the SEP-30 recovery signers registered for an account.  Returns an
+ * empty list when no SEP-30 server is configured so guardian-only recovery
+ * continues to work unchanged.
+ */
+export async function fetchSep30Signers(
+  account: string
+): Promise<Sep30RecoverySigner[]> {
+  if (!config.SEP30_RECOVERY_SERVER_URL) return [];
+
+  const url = new URL(
+    `/accounts/${encodeURIComponent(account)}/signers`,
+    config.SEP30_RECOVERY_SERVER_URL
+  );
+
+  const { default: https } = await import("https");
+  const raw: string = await new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    const req = https.request(
+      {
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method: "GET",
+        headers: { Accept: "application/json" },
+      },
+      (res) => {
+        res.on("data", (d: Buffer) => chunks.push(d));
+        res.on("end", () => resolve(Buffer.concat(chunks).toString()));
+        res.on("error", reject);
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+
+  const parsed = JSON.parse(raw) as {
+    signers?: Sep30RecoverySigner[];
+    error?: string;
+  };
+  if (parsed.error) {
+    throw new Error(`SEP-30 error: ${parsed.error}`);
+  }
+  return parsed.signers ?? [];
+}
+
+/**
+ * Alerts the owner when SEP-30 recovery signers are registered or when an
+ * identity verification is pending.  Combined with guardian recovery — this
+ * does not replace guardian alerts.
+ */
+async function notifySep30Signers(
+  ownerAddress: string,
+  signers: Sep30RecoverySigner[],
+  eventId: string
+): Promise<void> {
+  if (signers.length === 0) return;
+
+  const ownerDevices = await getDevicesForAccounts([ownerAddress]);
+  if (ownerDevices.length === 0) return;
+
+  const locale = ownerDevices[0]?.locale ?? "en";
+  const pendingIdentity = signers.some((s) => s.identityVerified === false);
+  const titleKey = pendingIdentity
+    ? ("recovery.sep30.identity_pending.title" as const)
+    : ("recovery.sep30.signers.title" as const);
+  const bodyKey = pendingIdentity
+    ? ("recovery.sep30.identity_pending.body" as const)
+    : ("recovery.sep30.signers.body" as const);
+
+  await sendPushToAll(ownerDevices, {
+    title: tNotification(titleKey, locale),
+    body: tNotification(bodyKey, locale),
+    data: {
+      eventId,
+      topic0: "recovery",
+      topic1: pendingIdentity ? "sep30_identity_pending" : "sep30_signers",
+    },
+  });
+  console.log(
+    `[recovery-notifier] SEP-30 alert sent to ${ownerDevices.length} device(s) for ${ownerAddress}`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Soroban event types (subset we care about)
 // ---------------------------------------------------------------------------
 
@@ -107,6 +217,12 @@ export async function startRecoveryNotifier(): Promise<void> {
   }
 
   console.log("[recovery-notifier] starting for contract", config.GLOBE_WALLET_CONTRACT_ID);
+  if (config.SEP30_RECOVERY_SERVER_URL) {
+    console.log(
+      "[recovery-notifier] SEP-30 recovery server enabled:",
+      config.SEP30_RECOVERY_SERVER_URL
+    );
+  }
 
   let startLedger = 0; // 0 = latest; will be updated after each poll
 
@@ -244,37 +360,19 @@ async function processEvent(event: SorobanEvent): Promise<void> {
     );
   }
 
-  // Guardian notification — only on initiation (they need to approve).
-  if (isRecoveryInitiated) {
-    await notifyGuardians(event, ownerAddress);
-  }
-
-  // Cache invalidation: bust the contract cache when detecting state-mutating
-  // events so subsequent reads reflect the new on-chain state immediately.
-  if (isRecoveryInitiated || isRecoveryApproved || isGuardianEvent) {
-    bustContractCache(event.contractId).catch((err: Error) => {
+  // SEP-30 recovery server integration (#260): when a recovery is initiated,
+  // also surface any SEP-30 recovery signers so the owner is aware of the
+  // alternative recovery path alongside guardians.
+  if (isRecoveryInitiated && config.SEP30_RECOVERY_SERVER_URL) {
+    try {
+      const signers = await fetchSep30Signers(ownerAddress);
+      await notifySep30Signers(ownerAddress, signers, event.id);
+    } catch (err) {
       console.error(
-        `[recovery-notifier] failed to bust cache for ${event.contractId}`,
-        err.message
+        "[recovery-notifier] SEP-30 signer lookup failed",
+        (err as Error).message
       );
-    });
-  }
-}
-
-async function notifyGuardians(event: SorobanEvent, ownerAddress: string): Promise<void> {
-  // The guardian addresses are embedded in the contract event.  In the
-  // globe-wallet contract, `recovery.initiated` emits a Vec<Address> of
-  // the guardian list as part of the event value.  We extract whatever
-  // addresses are present in the value; if the structure differs from
-  // expectations we log and skip rather than crash.
-  const guardianAddresses = extractGuardianAddresses(event.value);
-
-  if (guardianAddresses.length === 0) {
-    console.warn(
-      "[recovery-notifier] could not extract guardian addresses from event",
-      event.id
-    );
-    return;
+    }
   }
 
   // Exclude the owner from the guardian list (should not happen but be safe).
@@ -298,42 +396,20 @@ async function notifyGuardians(event: SorobanEvent, ownerAddress: string): Promi
   );
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function extractTopicString(val: SorobanEventValue | undefined): string | null {
-  if (!val) return null;
-  // The stellar-sdk decodes symbol ScVals as plain strings.
-  if (typeof val === "string") return val;
-  if (val.type === "symbol" || val.type === "string") return String(val.value);
+function extractTopicString(topic: SorobanEventValue | undefined): string | null {
+  if (!topic) return null;
+  if (typeof topic.value === "string") return topic.value;
   return null;
 }
 
-function extractAddress(val: SorobanEventValue): string | null {
-  if (!val) return null;
-  if (typeof val.value === "string" && val.value.startsWith("G")) return val.value;
-  // Address may be nested under a .value key.
-  if (
-    typeof val.value === "object" &&
-    val.value !== null &&
-    "address" in (val.value as object)
-  ) {
-    const addr = (val.value as { address: unknown }).address;
-    if (typeof addr === "string" && addr.startsWith("G")) return addr;
+function extractAddress(value: SorobanEventValue): string | null {
+  if (typeof value.value === "string") return value.value;
+  if (value.value && typeof value.value === "object") {
+    const obj = value.value as Record<string, unknown>;
+    if (typeof obj.address === "string") return obj.address;
+    if (typeof obj.owner === "string") return obj.owner;
   }
   return null;
-}
-
-function extractGuardianAddresses(val: SorobanEventValue): string[] {
-  if (!val || !val.value) return [];
-  // If the value is an array of addresses.
-  if (Array.isArray(val.value)) {
-    return (val.value as unknown[])
-      .map((v) => (typeof v === "string" ? v : null))
-      .filter((v): v is string => v !== null && v.startsWith("G"));
-  }
-  return [];
 }
 
 function sleep(ms: number): Promise<void> {

@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # Builds, deploys, and records contract IDs and wasm hashes for a release (issue #84).
 # Writes contract/deployments/<network>.json containing:
-#   { globeWallet, tokenWrapper, wasmHashes, deployedAt, gitSha }
+#   { globeWallet, tokenWrapper, admin, wasmHashes, deployedAt, gitSha }
+#
+# The globe-wallet admin is set atomically at deploy time via the contract's
+# `__constructor` (issue #262). There is no separate, front-runnable
+# `initialize` call: the admin is passed as a constructor argument in the same
+# transaction that deploys the wasm. After deploy the script reads `admin()`
+# back and aborts if it does not match the deployer.
 #
 # Usage:
 #   ./scripts/deploy.sh [network] [--dry-run]
@@ -94,9 +100,11 @@ if [ "$DRY_RUN" = true ]; then
     echo "==> Using existing manifest contract IDs from $EXISTING_MANIFEST for dry-run verification"
     GLOBE_WALLET_ID="$(grep -o '"globeWallet": "[^"]*' "$EXISTING_MANIFEST" | cut -d'"' -f4 || echo "CBGLPMNSM4FWMIZ6FFBSRN7FNVCHCI2SLZNODA27LEOXFPLWNYEAEP3K")"
     TOKEN_WRAPPER_ID="$(grep -o '"tokenWrapper": "[^"]*' "$EXISTING_MANIFEST" | cut -d'"' -f4 || echo "CBGLPMNSM4FWMIZ6FFBSRN7FNVCHCI2SLZNODA27LEOXFPLWNYEAEP3K")"
+    ADMIN_ADDRESS="$(grep -o '"admin": "[^"]*' "$EXISTING_MANIFEST" | cut -d'"' -f4 || echo "")"
   else
     GLOBE_WALLET_ID="CBGLPMNSM4FWMIZ6FFBSRN7FNVCHCI2SLZNODA27LEOXFPLWNYEAEP3K"
     TOKEN_WRAPPER_ID="CBGLPMNSM4FWMIZ6FFBSRN7FNVCHCI2SLZNODA27LEOXFPLWNYEAEP3K"
+    ADMIN_ADDRESS=""
   fi
 else
   if ! command -v "$CLI" >/dev/null 2>&1; then
@@ -120,15 +128,27 @@ else
     curl -sf "${FRIENDBOT_URL}?addr=${DEPLOYER_ADDRESS}" >/dev/null || true
   fi
 
-  echo "==> Deploying globe-wallet"
-  GLOBE_WALLET_ID="$("$CLI" contract deploy --wasm "$GLOBE_WALLET_WASM" --source "$IDENTITY" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" | tail -1)"
+  # The admin is set atomically by the contract's `__constructor` in the same
+  # transaction that deploys the wasm. There is no separate `initialize` call
+  # that could be front-run (issue #262).
+  echo "==> Deploying globe-wallet (constructor sets admin=$DEPLOYER_ADDRESS)"
+  GLOBE_WALLET_ID="$("$CLI" contract deploy --wasm "$GLOBE_WALLET_WASM" --source "$IDENTITY" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" -- --admin "$DEPLOYER_ADDRESS" | tail -1)"
 
   echo "==> Deploying token-wrapper"
   TOKEN_WRAPPER_ID="$("$CLI" contract deploy --wasm "$TOKEN_WRAPPER_WASM" --source "$IDENTITY" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" | tail -1)"
 
-  echo "==> Initializing contracts"
-  "$CLI" contract invoke --id "$GLOBE_WALLET_ID" --source "$IDENTITY" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" -- initialize --admin "$DEPLOYER_ADDRESS" || true
-  "$CLI" contract invoke --id "$GLOBE_WALLET_ID" --source "$IDENTITY" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" -- set_token_wrapper --admin "$DEPLOYER_ADDRESS" --token_wrapper_id "$TOKEN_WRAPPER_ID" || true
+  echo "==> Setting token-wrapper on globe-wallet"
+  "$CLI" contract invoke --id "$GLOBE_WALLET_ID" --source "$IDENTITY" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" -- set_token_wrapper --admin "$DEPLOYER_ADDRESS" --token_wrapper_id "$TOKEN_WRAPPER_ID"
+
+  echo "==> Verifying admin() matches deployer"
+  ACTUAL_ADMIN="$("$CLI" contract invoke --id "$GLOBE_WALLET_ID" --source "$IDENTITY" --rpc-url "$RPC_URL" --network-passphrase "$NETWORK_PASSPHRASE" -- admin | tail -1 | tr -d '"')"
+  if [ "$ACTUAL_ADMIN" != "$DEPLOYER_ADDRESS" ]; then
+    echo "ERROR: admin() mismatch after deploy: expected '$DEPLOYER_ADDRESS', got '$ACTUAL_ADMIN'" >&2
+    echo "       Aborting — the contract may have been front-run or initialized incorrectly." >&2
+    exit 1
+  fi
+  echo "==> admin() verified: $ACTUAL_ADMIN"
+  ADMIN_ADDRESS="$ACTUAL_ADMIN"
 fi
 
 MANIFEST_PATH="$CONTRACT_DIR/deployments/${NETWORK}.json"
@@ -142,6 +162,7 @@ cat > "$MANIFEST_PATH" <<JSON
     "globeWallet": "$GLOBE_WALLET_ID",
     "tokenWrapper": "$TOKEN_WRAPPER_ID"
   },
+  "admin": "$ADMIN_ADDRESS",
   "wasmHashes": {
     "globeWallet": "$GLOBE_HASH",
     "tokenWrapper": "$WRAPPER_HASH"
@@ -154,5 +175,6 @@ JSON
 echo "==> Wrote manifest to $MANIFEST_PATH"
 echo "    globeWallet:  $GLOBE_WALLET_ID"
 echo "    tokenWrapper: $TOKEN_WRAPPER_ID"
+echo "    admin:        $ADMIN_ADDRESS"
 echo "    gitSha:       $GIT_SHA"
 echo "    deployedAt:   $DEPLOYED_AT"
