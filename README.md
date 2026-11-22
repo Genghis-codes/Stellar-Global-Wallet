@@ -113,8 +113,8 @@ This project is in **active development on Stellar testnet**. It has not been au
 
 ## Handsoff notes
 
-<!-- handsoff-issue-264 -->
-- #264: Asset codes compared case-insensitively for tracking but case-sensitively for spend limits
+<!-- handsoff-issue-269 -->
+- #269: USD-denominated aggregate spend limits across all assets
 
-<!-- handsoff-issue-267 -->
-- #267: Clean up the contract's deprecated API surface (`propose_upgrade` deprecation note is wrong)
+<!-- handsoff-issue-270 -->
+- #270: New-destination cooldown and trusted address book enforced on-chain

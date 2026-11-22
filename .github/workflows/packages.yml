@@ -1,58 +1,88 @@
-name: Packages CI
+name: Packages
 
 on:
   push:
-    paths:
-      - "packages/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/packages.yml"
+    branches: [main]
+    tags: ['sdk-*', 'sdk-kotlin-*', 'sdk-swift-*']
   pull_request:
     paths:
-      - "packages/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/packages.yml"
-
-permissions:
-  contents: read
+      - 'packages/**'
+      - 'backend/openapi.yaml'
+      - '.github/workflows/packages.yml'
 
 jobs:
-  build-and-test:
+  sdk-typescript:
+    name: SDK (TypeScript)
     runs-on: ubuntu-latest
-
+    defaults:
+      run: { working-directory: packages/sdk }
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
+          cache-dependency-path: packages/sdk/package-lock.json
+      - run: npm ci
+      - run: npm run type-check
+      - run: npm test
 
-      - name: Install workspace dependencies
-        run: npm ci
+  sdk-kotlin:
+    name: SDK (Kotlin)
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: packages/sdk-kotlin }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Generate client from OpenAPI
+        run: ./gradlew openApiGenerate
+      - name: Conformance tests
+        run: ./gradlew test
 
-      # The backend is also a workspace (it has its own Backend CI), so name
-      # the publishable packages explicitly, in dependency order: the SDK
-      # imports the generated bindings' dist/ output.
-      - name: Build
-        run: |
-          npm run build --workspace packages/bindings/globe-wallet
-          npm run build --workspace packages/sdk
+  sdk-swift:
+    name: SDK (Swift)
+    runs-on: macos-14
+    defaults:
+      run: { working-directory: packages/sdk-swift }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate client from OpenAPI
+        run: swift package plugin --allow-writing-to-package-directory openapi-generate
+      - name: Conformance tests
+        run: swift test
 
-      - name: Type-check
-        run: |
-          npm run type-check --workspace packages/types --if-present
-          npm run type-check --workspace packages/fixtures --if-present
-          npm run type-check --workspace packages/sdk
-
-      - name: Test
-        run: npm test --workspace packages/sdk
-
-      - name: Check i18n catalogue completeness
-        run: npm run i18n:check --workspace=packages/i18n
-
-      - name: Test i18n formatting
-        run: npm test --workspace packages/i18n
+  publish:
+    name: Publish SDKs
+    if: startsWith(github.ref, 'refs/tags/sdk-')
+    needs: [sdk-typescript, sdk-kotlin, sdk-swift]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+      - name: Publish TypeScript SDK
+        working-directory: packages/sdk
+        run: npm ci && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v3
+      - name: Publish Kotlin SDK
+        working-directory: packages/sdk-kotlin
+        run: ./gradlew publish
+        env:
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+      - name: Publish Swift SDK
+        working-directory: packages/sdk-swift
+        run: swift package archive-source

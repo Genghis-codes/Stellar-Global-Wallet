@@ -48,10 +48,164 @@ info:
     and Horizon/Soroban transient failures) may be retried with backoff. Codes
     such as `REFRESH_TOKEN_INVALID` and `ROUTE_NOT_FOUND` are not retryable and
     require the client to re-authenticate or correct the request.
+
+    ## Encrypted key backup (#274)
+
+    The backup endpoints store **only ciphertext**. The wallet secret is
+    encrypted on the client before upload; the server never sees the plaintext
+    secret, the wrapping key, or the passphrase. See
+    [`docs/key-backup.md`](./key-backup.md) for the client-side encryption spec,
+    recovery flow and threat model.
 servers:
   - url: http://localhost:4000
     description: Local development
-paths: {}
+paths:
+  /api/v1/backups:
+    post:
+      summary: Upload an encrypted key backup blob
+      description: >-
+        Stores an opaque, client-encrypted backup blob for the authenticated
+        user. The server treats `ciphertext` as opaque bytes and never attempts
+        to decrypt it. Uploading replaces any existing blob for the user
+        (last-write-wins). Rate limited per user.
+      operationId: uploadKeyBackup
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KeyBackupUpload"
+      responses:
+        "201":
+          description: Backup stored.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyBackupMetadata"
+        "400":
+          description: >-
+            Invalid input (e.g. `BACKUP_INVALID_CIPHERTEXT`,
+            `BACKUP_INVALID_KDF_PARAMS`).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Missing or invalid bearer token.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Ciphertext exceeds the maximum allowed size (`BACKUP_TOO_LARGE`).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded (`BACKUP_RATE_LIMITED`).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    get:
+      summary: Fetch the authenticated user's encrypted backup blob
+      description: >-
+        Returns the stored ciphertext blob and its non-secret metadata. The
+        client derives the wrapping key locally and decrypts. Rate limited per
+        user.
+      operationId: getKeyBackup
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Backup found.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyBackupBlob"
+        "401":
+          description: Missing or invalid bearer token.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No backup stored for this user (`BACKUP_NOT_FOUND`).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded (`BACKUP_RATE_LIMITED`).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Delete the authenticated user's encrypted backup blob
+      operationId: deleteKeyBackup
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "204":
+          description: Backup deleted (idempotent).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+        "401":
+          description: Missing or invalid bearer token.
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded (`BACKUP_RATE_LIMITED`).
+          headers:
+            X-Request-Id:
+              $ref: "#/components/headers/X-Request-Id"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -81,9 +235,98 @@ components:
         type: string
         pattern: '^[A-Za-z0-9-]{8,64}$'
         example: "3f1c9a2e-7b4d-4c8a-9e6f-1a2b3c4d5e6f"
+  responses:
+    Error:
+      description: Shared error envelope
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/X-Request-Id"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   schemas:
     ErrorResponse:
       $ref: "./openapi-errors.yaml#/components/schemas/ErrorResponse"
+    KeyBackupKdf:
+      type: object
+      description: >-
+        Non-secret KDF parameters the client used to derive the wrapping key.
+        Stored alongside the ciphertext so recovery can re-derive the key. The
+        salt is public; the passphrase and derived key are never sent.
+      required: [algorithm, salt, memoryKiB, iterations, parallelism]
+      properties:
+        algorithm:
+          type: string
+          enum: [argon2id, passkey-prf]
+        salt:
+          type: string
+          description: Base64-encoded random salt (>= 16 bytes).
+          example: "3q2+7w=="
+        memoryKiB:
+          type: integer
+          minimum: 19456
+          description: Argon2id memory cost in KiB (OWASP minimum 19456).
+          example: 65536
+        iterations:
+          type: integer
+          minimum: 2
+          example: 3
+        parallelism:
+          type: integer
+          minimum: 1
+          example: 1
+    KeyBackupUpload:
+      type: object
+      required: [version, cipher, ciphertext, nonce, kdf]
+      properties:
+        version:
+          type: integer
+          enum: [1]
+          description: Backup format version.
+        cipher:
+          type: string
+          enum: [xchacha20poly1305]
+          description: AEAD used to wrap the secret on the client.
+        ciphertext:
+          type: string
+          description: >-
+            Base64-encoded AEAD ciphertext (includes the auth tag). Opaque to
+            the server. Maximum 8 KiB decoded.
+          example: "9xQ7..."
+        nonce:
+          type: string
+          description: Base64-encoded 24-byte XChaCha20 nonce.
+          example: "AAAAAAAAAAAAAAAAAAAAAAAA"
+        kdf:
+          $ref: "#/components/schemas/KeyBackupKdf"
+    KeyBackupMetadata:
+      type: object
+      required: [version, cipher, kdf, updatedAt]
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        cipher:
+          type: string
+          enum: [xchacha20poly1305]
+        kdf:
+          $ref: "#/components/schemas/KeyBackupKdf"
+        updatedAt:
+          type: string
+          format: date-time
+    KeyBackupBlob:
+      allOf:
+        - $ref: "#/components/schemas/KeyBackupMetadata"
+        - type: object
+          required: [ciphertext, nonce]
+          properties:
+            ciphertext:
+              type: string
+              description: Base64-encoded AEAD ciphertext. Opaque to the server.
+            nonce:
+              type: string
+              description: Base64-encoded 24-byte XChaCha20 nonce.
     Amount:
       type: string
       pattern: '^\d+(\.\d{1,7})?$'
@@ -222,174 +465,3 @@ components:
           type: string
           description: >-
             Fraction (0–1) of the latest ledger's capacity in use, as a
-            decimal string. "0" when served from the fallback.
-          example: "0.42"
-        source:
-          type: string
-          enum: [horizon, fallback]
-          description: >-
-            `horizon` when the values come from live `/fee_stats`;
-            `fallback` when Horizon was unreachable and the base fee (100
-            stroops) is returned for every tier.
-    ContractFeeEstimate:
-      type: object
-      required: [inclusionFee, resourceFee, totalFee]
-      description: >-
-        Soroban fee estimate for a contract call (#14). Each tier is a
-        `FeeEstimate` (stroops + XLM strings). `inclusionFee` is the classic
-        per-operation inclusion fee; `resourceFee` is the Soroban
-        `minResourceFee` from simulation; `totalFee` is their sum. The
-        estimate matches the fee in the XDR produced by the corresponding
-        build route for the same inputs.
-      properties:
-        inclusionFee:
-          $ref: "#/components/schemas/FeeEstimate"
-        resourceFee:
-          $ref: "#/components/schemas/FeeEstimate"
-        totalFee:
-          $ref: "#/components/schemas/FeeEstimate"
-  responses:
-    ValidationError:
-      description: Input failed validation
-      headers:
-        X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/ErrorResponse" }
-          examples:
-            invalid:
-              $ref: "./openapi-errors.yaml#/components/examples/BadRequest400"
-    Unauthorized:
-      description: Missing or invalid bearer token
-      headers:
-        X-Request-Id: { $ref: "#/components/headers/X-Request-Id" }
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/ErrorResponse" }
-          example:
-            code: AUTH_HEADER_INVALID
-            error: Missing or malformed Authorization header
-            requestId: "3f1c9a2e-7b4d-4c8a-9e6f-1a2b3c4d5e6f"
-
-paths:
-  /api/v1/network/fees:
-    get:
-      summary: Estimate low/normal/high network fees from Horizon fee stats (#13)
-      description: >-
-        Returns the p10/p50/p90 per-operation fees from Horizon
-        `/fee_stats` so the send flow can offer priority options during
-        surge pricing. Responses are cached in memory for 5 seconds. If
-        Horizon is unreachable the base fee (100 stroops) is returned for
-        every tier with `source: "fallback"`.
-      responses:
-        "200":
-          description: Fee estimate
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/NetworkFeesResponse" }
-              examples:
-                horizon:
-                  value:
-                    low: { stroops: "100", xlm: "0.0000100" }
-                    normal: { stroops: "200", xlm: "0.0000200" }
-                    high: { stroops: "1500", xlm: "0.0001500" }
-                    ledgerCapacityUsage: "0.42"
-                    source: horizon
-                fallback:
-                  value:
-                    low: { stroops: "100", xlm: "0.0000100" }
-                    normal: { stroops: "100", xlm: "0.0000100" }
-                    high: { stroops: "100", xlm: "0.0000100" }
-                    ledgerCapacityUsage: "0"
-                    source: fallback
-
-  /api/v1/contract/wallet/estimate:
-    post:
-      summary: Estimate the Soroban resource fee for a contract call (#14)
-      description: >-
-        Runs simulation only (no XDR is built or returned) and reports the
-        inclusion fee, the Soroban `minResourceFee` and their total so the
-        UI can show the full cost before signing a spend, recovery or
-        guardian change. The estimate matches the fee in the XDR produced
-        by the corresponding build route for the same inputs. If simulation
-        fails the mapped contract error is returned instead of a fee.
-      security: [{ bearerAuth: [] }]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [action, sourcePublicKey]
-              properties:
-                action:
-                  type: string
-                  enum:
-                    - record_spend
-                    - set_spend_limit
-                    - add_guardian
-                    - remove_guardian
-                    - add_asset
-                    - remove_asset
-                    - recovery_initiate
-                    - recovery_approve
-                    - recovery_revoke
-                    - recovery_execute
-                    - recovery_cancel
-                  description: Contract action to simulate.
-                sourcePublicKey: { $ref: "#/components/schemas/AccountId" }
-                params:
-                  type: object
-                  additionalProperties: true
-                  description: >-
-                    Action-specific parameters, identical to the matching
-                    build route. Amounts are decimal strings.
-      responses:
-        "200":
-          description: Fee estimate
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ContractFeeEstimate" }
-              example:
-                inclusionFee: { stroops: "100", xlm: "0.0000100" }
-                resourceFee: { stroops: "123456", xlm: "0.0123456" }
-                totalFee: { stroops: "123556", xlm: "0.0123556" }
-        "400":
-          $ref: "#/components/responses/ValidationError"
-        "401":
-          $ref: "#/components/responses/Unauthorized"
-        "422":
-          description: Simulation failed — mapped contract error, not a fee
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ErrorResponse" }
-
-  /api/v1/wallet/send/precheck:
-    post:
-      summary: Check a send for problems before signing (#64)
-      description: >-
-        Read-only. Loads the source and destination accounts and reports
-        every known reason the payment would fail or lose funds: destination
-        missing (and whether it would be created), missing/unauthorized
-        trustline, SEP-29 memo required, sending to yourself, and amount
-        above the spendable balance. A well-formed request always returns
-        200; problems come back as warnings.
-      security: [{ bearerAuth: [] }]
-      parameters:
-        - $ref: "#/components/parameters/RequestId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [sourcePublicKey, destinationPublicKey, amount]
-              properties:
-                sourcePublicKey: { $ref: "#/components/schemas/AccountId" }
-                destinationPublicKey: { $ref: "#/components/schemas/AccountId" }
-                amount: { $ref: "#/components/schemas/Amount" }
-                asset: { $ref: "#/components/schemas/Asset" }
-                memo:
-                  type: string
-                  description: MEMO_TEXT, at most 28 UTF-8 bytes.
-      r

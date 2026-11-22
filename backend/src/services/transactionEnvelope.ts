@@ -164,3 +164,225 @@ export function assertNotExpired(tx: AnyTransaction, now: number = Date.now()): 
     );
   }
 }
+
+/**
+ * A single human-readable intent decoded from a transaction envelope. The
+ * wallet UI renders these before asking for a signature so users never sign
+ * XDR they can't inspect (#272).
+ */
+export type TransactionIntentKind =
+  | "payment"
+  | "createAccount"
+  | "accountMerge"
+  | "trustline"
+  | "signerChange"
+  | "allowanceApproval"
+  | "contractCall"
+  | "invokeHostFunction"
+  | "other";
+
+export interface TransactionIntent {
+  kind: TransactionIntentKind;
+  /** Short human-readable summary, e.g. "Send 10 XLM to G...". */
+  summary: string;
+  /** Structured fields for the UI; amounts are always strings. */
+  details: Record<string, string>;
+  /** Risky patterns a user should be warned about before signing. */
+  risks: TransactionRisk[];
+}
+
+export type TransactionRiskCode =
+  | "SIGNER_CHANGE"
+  | "ALLOWANCE_APPROVAL"
+  | "UNKNOWN_CONTRACT"
+  | "ACCOUNT_MERGE";
+
+export interface TransactionRisk {
+  code: TransactionRiskCode;
+  message: string;
+}
+
+export interface TransactionPreview {
+  /** Hex transaction hash of the envelope being previewed. */
+  hash: string;
+  /** G... source account whose sequence number is consumed. */
+  sourcePublicKey: string;
+  /** Total fee in stroops. */
+  fee: string;
+  /** Ordered intents, one per operation. */
+  intents: TransactionIntent[];
+  /** Union of all risks across intents, de-duplicated by code. */
+  risks: TransactionRisk[];
+}
+
+/**
+ * Contracts the wallet recognises as safe to call. Anything else is flagged
+ * as an unknown contract so the user can decide whether to trust it.
+ */
+export const KNOWN_CONTRACT_IDS: ReadonlySet<string> = new Set<string>();
+
+function assetLabel(asset: StellarSdk.Asset): string {
+  return asset.isNative() ? "XLM" : `${asset.getCode()}:${asset.getIssuer()}`;
+}
+
+function decodeOperation(op: StellarSdk.xdr.Operation, knownContracts: ReadonlySet<string>): TransactionIntent {
+  const body = op.body();
+  const type = body.switch().name;
+
+  if (type === "payment") {
+    const payment = body.paymentOp();
+    const asset = StellarSdk.Asset.fromOperation(op).asset;
+    const amount = StellarSdk.Operation.fromXDRObject(op).amount ?? "0";
+    const destination = StellarSdk.StrKey.encodeEd25519PublicKey(payment.destination().ed25519());
+    return {
+      kind: "payment",
+      summary: `Send ${amount} ${assetLabel(asset)} to ${destination}`,
+      details: { destination, amount, asset: assetLabel(asset) },
+      risks: [],
+    };
+  }
+
+  if (type === "createAccount") {
+    const create = body.createAccountOp();
+    const destination = StellarSdk.StrKey.encodeEd25519PublicKey(create.destination().ed25519());
+    const startingBalance = StellarSdk.Operation.fromXDRObject(op).startingBalance ?? "0";
+    return {
+      kind: "createAccount",
+      summary: `Create account ${destination} with ${startingBalance} XLM`,
+      details: { destination, startingBalance },
+      risks: [],
+    };
+  }
+
+  if (type === "accountMerge") {
+    const destination = StellarSdk.StrKey.encodeEd25519PublicKey(body.destination().ed25519());
+    return {
+      kind: "accountMerge",
+      summary: `Merge this account into ${destination}`,
+      details: { destination },
+      risks: [{ code: "ACCOUNT_MERGE", message: "This operation transfers the entire account balance and closes the account." }],
+    };
+  }
+
+  if (type === "changeTrust") {
+    const change = body.changeTrustOp();
+    const asset = StellarSdk.Asset.fromOperation(op).line;
+    const limit = StellarSdk.Operation.fromXDRObject(op).limit ?? "0";
+    const label = assetLabel(asset);
+    return {
+      kind: "trustline",
+      summary: limit === "0" ? `Remove trustline for ${label}` : `Trust ${label} up to ${limit}`,
+      details: { asset: label, limit },
+      risks: [],
+    };
+  }
+
+  if (type === "setOptions") {
+    const setOptions = StellarSdk.Operation.fromXDRObject(op);
+    const details: Record<string, string> = {};
+    if (setOptions.signer) {
+      details.signerKey = setOptions.signer.ed25519PublicKey ?? setOptions.signer.preAuthTx ?? "";
+      details.signerWeight = String(setOptions.signer.weight);
+    }
+    if (setOptions.masterWeight !== undefined) details.masterWeight = String(setOptions.masterWeight);
+    if (setOptions.lowThreshold !== undefined) details.lowThreshold = String(setOptions.lowThreshold);
+    if (setOptions.medThreshold !== undefined) details.medThreshold = String(setOptions.medThreshold);
+    if (setOptions.highThreshold !== undefined) details.highThreshold = String(setOptions.highThreshold);
+    const risks: TransactionRisk[] = [];
+    if (setOptions.signer || setOptions.masterWeight !== undefined) {
+      risks.push({ code: "SIGNER_CHANGE", message: "This operation changes who can sign for the account." });
+    }
+    return {
+      kind: "signerChange",
+      summary: setOptions.signer ? `Add or update signer ${details.signerKey}` : "Change account signing options",
+      details,
+      risks,
+    };
+  }
+
+  if (type === "invokeHostFunction") {
+    const invoke = body.invokeHostFunctionOp();
+    const hostFunction = invoke.hostFunction();
+    const fnType = hostFunction.switch().name;
+    const details: Record<string, string> = { hostFunction: fnType };
+    const risks: TransactionRisk[] = [];
+
+    if (fnType === "hostFunctionTypeInvokeContract") {
+      const invocation = hostFunction.invokeContract();
+      const contractId = StellarSdk.StrKey.encodeContract(invocation.contractAddress().contractId());
+      const functionName = invocation.functionName().toString();
+      details.contractId = contractId;
+      details.function = functionName;
+      if (!knownContracts.has(contractId)) {
+        risks.push({ code: "UNKNOWN_CONTRACT", message: `Contract ${contractId} is not in the wallet's known-contract list.` });
+      }
+      if (/approve|allowance/i.test(functionName)) {
+        risks.push({ code: "ALLOWANCE_APPROVAL", message: "This call appears to approve an allowance that lets another party spend your tokens." });
+      }
+      return {
+        kind: "contractCall",
+        summary: `Call ${functionName} on contract ${contractId}`,
+        details,
+        risks,
+      };
+    }
+
+    return {
+      kind: "invokeHostFunction",
+      summary: `Invoke Soroban host function ${fnType}`,
+      details,
+      risks,
+    };
+  }
+
+  return {
+    kind: "other",
+    summary: `Operation ${type}`,
+    details: { operationType: type },
+    risks: [],
+  };
+}
+
+/**
+ * Decodes a transaction envelope into structured, human-readable intents and
+ * flags risky patterns before the user signs (#272). Accepts a base64 XDR
+ * string or an already-parsed transaction.
+ */
+export function previewTransaction(
+  input: string | AnyTransaction,
+  networkPassphrase: string,
+  knownContracts: ReadonlySet<string> = KNOWN_CONTRACT_IDS
+): TransactionPreview {
+  let transaction: AnyTransaction;
+  if (typeof input === "string") {
+    try {
+      transaction = StellarSdk.TransactionBuilder.fromXDR(input, networkPassphrase);
+    } catch {
+      throw new InvalidTransactionError("xdr is not a valid transaction envelope.", "MALFORMED_XDR");
+    }
+  } else {
+    transaction = input;
+  }
+
+  const inner = innerTransaction(transaction);
+  const intents = inner.operations.map((op) => decodeOperation(op, knownContracts));
+
+  const seen = new Set<TransactionRiskCode>();
+  const risks: TransactionRisk[] = [];
+  for (const intent of intents) {
+    for (const risk of intent.risks) {
+      if (!seen.has(risk.code)) {
+        seen.add(risk.code);
+        risks.push(risk);
+      }
+    }
+  }
+
+  return {
+    hash: transaction.hash().toString("hex"),
+    sourcePublicKey: baseAccountId(inner.source),
+    fee: inner.fee,
+    intents,
+    risks,
+  };
+}

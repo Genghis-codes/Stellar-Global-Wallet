@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { pool } from "../db";
+import { pool, Queryable } from "../db";
 import { AppError } from "../errors/appError";
 
 /** Cached results are replayed for 24 hours; after that the key is free to reuse. */
@@ -80,7 +80,8 @@ export function translateIdempotencyStoreError(err: unknown): unknown {
 export async function claimIdempotencyKey(
   sourcePublicKey: string,
   idempotencyKey: string,
-  fingerprint: string
+  fingerprint: string,
+  db: Queryable = pool
 ): Promise<
   | { status: "hit"; result: IdempotencyResult }
   | { status: "claimed" }
@@ -164,7 +165,8 @@ export async function commitIdempotencyResult(
   idempotencyKey: string,
   fingerprint: string,
   hash: string,
-  successful: boolean
+  successful: boolean,
+  db: Queryable = pool
 ): Promise<void> {
   try {
     await pool.query(
@@ -184,9 +186,10 @@ export async function commitIdempotencyResult(
  */
 export async function releaseIdempotencyKey(
   sourcePublicKey: string,
-  idempotencyKey: string
+  idempotencyKey: string,
+  db: Queryable = pool
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     `DELETE FROM idempotency_keys
      WHERE source_public_key = $1 AND idempotency_key = $2 AND committed = false`,
     [sourcePublicKey, idempotencyKey]
@@ -201,9 +204,10 @@ export async function releaseIdempotencyKey(
 /** @deprecated Use claimIdempotencyKey + commitIdempotencyResult instead. */
 export async function getCachedResult(
   sourcePublicKey: string,
-  idempotencyKey: string
+  idempotencyKey: string,
+  db: Queryable = pool
 ): Promise<IdempotencyResult | null> {
-  const result = await pool.query(
+  const result = await db.query(
     `SELECT result_hash, result_successful FROM idempotency_keys
      WHERE source_public_key = $1 AND idempotency_key = $2
        AND committed = true AND created_at > NOW() - ${TTL_SQL}`,
@@ -223,9 +227,10 @@ export async function cacheResult(
   sourcePublicKey: string,
   idempotencyKey: string,
   hash: string,
-  successful: boolean
+  successful: boolean,
+  db: Queryable = pool
 ): Promise<void> {
-  await pool.query(
+  await db.query(
     `INSERT INTO idempotency_keys
        (source_public_key, idempotency_key, request_fingerprint, result_hash, result_successful, committed)
      VALUES ($1, $2, '', $3, $4, true)

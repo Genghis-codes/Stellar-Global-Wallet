@@ -9,6 +9,14 @@
 # After the first deploy, put the resulting URL in backend/README.md where
 # this issue's acceptance criteria asks for it (see the TODO there) — the
 # URL isn't known until Render assigns it, so it can't be filled in here.
+#
+# Secrets management & rotation (#283): rotatable secrets (JWT_SECRET,
+# API_KEY, SPONSOR_SECRET_KEY, SMTP_*) are NOT generated inline here.
+# Instead they are stored in a secret provider (Render env group, Vault, or
+# AWS Secrets Manager) and referenced via `sync: false`, so rotating a value
+# in the provider + redeploying (or hot-reloading, see
+# backend/src/secrets/) never requires editing this file. See
+# backend/docs/secrets-rotation.md for the runbook.
 databases:
   - name: globewallet-preview-db
     plan: free
@@ -65,14 +73,32 @@ services:
       # Graceful shutdown (#220): 25s drain allows in-flight submissions to settle before Render's 30s SIGKILL
       - key: SHUTDOWN_TIMEOUT_MS
         value: "25000"
-      # Secrets management (#110's "edge case to handle"): generated once by
-      # Render at provision time and never committed here. `sync: false`
-      # means "required, but Render prompts for it / generates it" rather
-      # than reading a literal value from this file.
+      # Secrets management (#283): select the secret provider backend.
+      # `env` reads from process env (default); `vault` / `aws-sm` pull from
+      # the external store and support hot reload of rotated values.
+      - key: SECRET_PROVIDER
+        value: env
+      # Hot reload (#283): poll interval (ms) for rotated secrets. 0 disables
+      # polling; the provider is still re-read on demand. Rotation therefore
+      # does not require a redeploy.
+      - key: SECRET_REFRESH_INTERVAL_MS
+        value: "60000"
+      # Sponsor keys in KMS (#283): when set, sponsor signing is delegated to
+      # a remote KMS signer instead of holding the raw key in process memory.
+      - key: SPONSOR_KMS_KEY_ID
+        sync: false
+      # Rotatable secrets (#283): stored in the secret provider and injected
+      # at deploy time via `sync: false` (Render prompts / reads from the
+      # linked secret store) rather than generated inline. Rotate in the
+      # provider and redeploy — no edits to this file required.
       - key: JWT_SECRET
-        generateValue: true
+        sync: false
       - key: API_KEY
-        generateValue: true
+        sync: false
+      - key: SPONSOR_SECRET_KEY
+        sync: false
+      - key: SMTP_URL
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: globewallet-preview-db
