@@ -26,6 +26,25 @@ This suite provides two CI-enforced guarantees:
 
 ---
 
+## `requireAccountMatch` actor-field resolution (#266)
+
+`requireAccountMatch` no longer scans a priority list of actor fields. Each protected route declares **exactly one** actor field via route metadata, and the middleware validates only that field:
+
+- **Route metadata:** `requireAccountMatch({ source: 'body', field: 'sourcePublicKey' })` (or `'params'` / `'query'`). The declared field is the single source of truth for the actor identity.
+- **Ambiguous requests rejected:** If the request carries more than one actor field (`sourcePublicKey`, `user`, `guardian`, `admin`, `account`, `currentAdmin`, `candidate`, `innerAccount`, `userPublicKey`, …) with **different** values, the request is rejected with `403 ACCOUNT_MISMATCH` before the handler runs. This closes the confused-deputy gap where a caller sets `sourcePublicKey` to their own account while a lower-priority field names the victim.
+- **Deny by default:** A protected route that names **no** actor field is rejected with `400 ACCOUNT_REQUIRED` (missing actor) rather than passing through. Routes that derive the actor from a secret key or from `req.user.sub` are unaffected and continue to be classified as `authenticated-account-scoped` / `authenticated-self`.
+
+### Authz matrix additions
+
+| Scenario | Expected |
+|---|---|
+| Own `sourcePublicKey` + victim `user` (different values) | `403 ACCOUNT_MISMATCH` |
+| Protected route with no actor field | `400 ACCOUNT_REQUIRED` |
+| Declared actor field matches `sub` | Allowed |
+| Declared actor field differs from `sub` | `403 ACCOUNT_MISMATCH` |
+
+---
+
 ## Authorization Classes & Expected Outcomes
 
 | `AuthzClass` | `anon` | `otherAccount` (BOB → ALICE) | `ownAccount` (ALICE → ALICE) | `apiKeyHeader` (raw `x-api-key`) | `apiKeyJwt` (`sub=api-key-user`) |
@@ -106,31 +125,6 @@ This suite provides two CI-enforced guarantees:
 - Infrastructure & docs: `GET /health`, `GET /metrics`, `GET /api/v1/health/details`, `GET /api/v1/health/metrics`, `GET /.well-known/jwks.json`, `GET /auth/csrf`, `POST /csp-report`, `POST /api/v1/csp-report`, `GET /api/openapi.json`
 - Configuration & discovery: `GET /config`, `GET /api/v1/config`, `GET /api/v1/flags`, `GET /api/v1/network/fees`, `GET /api/v1/network/info`, `GET /api/v1/price`, `GET /api/v1/price/:asset`, `GET /api/v1/price/:asset/history`, `GET /api/v1/assets/verified`, `GET /api/v1/assets/search`, `GET /api/v1/assets/:code/:issuer`
 - Auth exchange endpoints: `GET /api/v1/auth/challenge`, `POST /api/v1/auth/token`, `POST /api/v1/auth/refresh`, `POST /api/v1/auth/logout`
-- Public on-ledger reads: `GET /api/v1/account/:publicKey{,/balances,/signers,/reserves,/transactions,/payments,/activity}`, `POST /api/v1/account/:publicKey/muxed`, `GET /api/v1/transactions/:hash`, `GET /api/v1/transactions/status/:hash`, `GET /api/v1/contract/wallet/:publicKey/assets`, `GET /api/v1/contract/wallet/:publicKey/spend-allowance{,/:assetCode}`, `GET /api/v1/contract/wallet/guardians`, `GET /api/v1/contract/wallet/recovery{,/config,/proposal}`, `GET /api/v1/contract/status`, `GET /api/v1/contract/admin`, `GET /api/v1/contract/upgrade{,/status}`
-- Testnet-only onboarding: `POST /api/v1/dev/fund` (not mounted on `STELLAR_NETWORK=mainnet`)
+- Public on-ledger reads: `GET /api/v1/account/:publicKey{,/balances,/signers,/reserves,/transactions,/payments,/activity}`, `POST /api/v1/account/:publicKey/muxed`, `GET /api/v1/transactions/:hash`, `GET /api/v1/transactions/s
 
----
-
-## Findings Discovered and Fixed in #233
-
-Building this exhaustive matrix uncovered and closed nine real authorization / routing gaps:
-
-1. **`GET /api/v1/account/:publicKey/transactions/export.csv`** — Had `jwtAuth` without `requireAccountMatch`, allowing any authenticated user to download another user's CSV tax statement. Fixed by attaching `requireAccountMatch((req) => req.params.publicKey)`.
-2. **`POST /api/v1/wallet/sponsor-fee`** — Used `body.innerAccount` (absent from `ACTOR_FIELDS`) and did not verify `innerTx.source === innerAccount`, allowing cross-account fee-sponsorship budget exhaustion. Fixed in `requireAccountMatch.ts` and `feeSponsorship.ts`.
-3. **`POST /api/v1/contract/admin/accept`** — Used `body.candidate` (absent from `ACTOR_FIELDS`). Added `"candidate"` after `"currentAdmin"` so `propose` scopes on `currentAdmin` and `accept` scopes on `candidate`.
-4. **`POST /api/v1/wallet/submit` & `POST /api/v1/contract/wallet/submit`** — Accepted `{ signedXdr }` with no account check against `req.user.sub`, allowing cross-account relay and idempotency-namespace pollution. Fixed via `assertSignedXdrAccountMatch` checking inner `source` and fee-bump `feeSource`.
-5. **`POST /api/v1/wallet/:publicKey/muxed` & `GET /api/v1/wallet/:publicKey/thresholds`** — Took `:publicKey` in `req.params`, which router-level `resolveActingAccount` did not inspect. Fixed by attaching explicit `requireAccountMatch((req) => req.params.publicKey)`.
-6. **Legacy custodial `*SecretKey` routes** (`send`, `fee-bump`, `path-payment-*`, `partial-transaction`, `submit-multisig`, `contract/wallet/spend`) — Did not derive the public key from `sourceSecretKey`/`feeSecretKey`/`userSecretKey`/`signerSecretKeys`, allowing cross-account submission if a secret seed was presented under another account's JWT. Fixed in `resolveActingAccount`.
-7. **`POST /api/v1/me/email/verify`** — Verified tokens globally (`WHERE token = $1`) without confirming `row.account === req.user.sub`, allowing cross-account email verification and address disclosure if a link leaked. Fixed in `emailVerification.ts` and `routes/email.ts`.
-8. **Unmounted routers restored & secured** — `createClientSigningRouter` (`routes/wallet.ts`) and `createTransactionsRouter` (`app.ts`) were imported but accidentally dropped from router mounting in earlier merges. Restored both mounts behind `jwtAuth` + `requireAccountMatch` (and scoped `GET /api/v1/transactions/account/:accountId/statuses` to `:accountId`).
-
----
-
-## Running the Matrix Locally
-
-```bash
-npm run build:packages
-npx --workspace backend jest tests/security/authzMatrix.test.ts
-```
-
-When adding a new Express route, add its entry to [`backend/tests/security/authzPolicy.ts`](../../tests/security/authzPolicy.ts) and update this document in the same PR.
+/* … truncated 3221 chars — edit only what you need near the top … */

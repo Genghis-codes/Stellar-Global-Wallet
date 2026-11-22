@@ -128,6 +128,25 @@ Use this after a suspected compromise or when the user changes their
 signing key. Individual sessions can be revoked with
 `DELETE /auth/sessions/:id`.
 
+## Actor-field authorization (`requireAccountMatch`)
+
+Protected routes decide authorization on the **actor field the handler
+actually acts on**, not on whichever actor field happens to appear first in
+the request. The middleware enforces three rules:
+
+1. **One declared field per route.** Each protected route declares exactly
+   one actor field (route metadata). Only that field is validated against the
+   authenticated account; other actor fields are ignored for the decision.
+2. **Ambiguous requests are rejected.** If a request carries multiple actor
+   fields (`sourcePublicKey`, `user`, `guardian`, …) with *different* values,
+   the request is rejected with `403` rather than guessing which one the
+   caller meant.
+3. **Deny by default.** A protected route that names no actor field is
+   rejected (`400`/`403`) instead of being allowed through.
+
+Clients must therefore send exactly the actor field the route expects, and
+must not mix actor fields with conflicting values in a single request.
+
 ## References
 
 - [SEP-10 Stellar Web Authentication](https://github.com/stellar/stellar-protocol/blob/master/ecosystem/sep-0010.md)
