@@ -110,3 +110,8 @@ flowchart LR
 ## ⚠️ Status
 
 This project is in **active development on Stellar testnet**. It has not been audited, so do not use it with real funds.
+
+## Handsoff notes
+
+<!-- handsoff-issue-263 -->
+- #263: `execute_recovery` leaves the compromised admin's pending upgrade and configuration in place
