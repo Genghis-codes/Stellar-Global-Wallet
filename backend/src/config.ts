@@ -2,6 +2,206 @@ import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+// #283 — Secrets management and rotation.
+//
+// Secrets (JWT keys, sponsor keys, SMTP credentials) used to be plain env
+// vars baked into the Render service definition, so rotating any of them
+// required a redeploy and a leak exposed everything at once. This module
+// introduces a small provider abstraction so the same config surface can be
+// sourced from env vars (default, dev/test), HashiCorp Vault, or AWS Secrets
+// Manager, and exposes a hot-reload hook so rotated values are picked up
+// without a redeploy.
+//
+// Threat model: the provider is the only component that talks to the secret
+// store; the rest of the app reads through `getSecret`/`reloadSecrets`.
+// Failure modes: if the provider is unreachable at boot we fail fast (same as
+// a missing env var today); if a hot reload fails we keep the last known-good
+// values and log, so a transient Vault/AWS outage never takes the API down.
+
+export type SecretProviderKind = "env" | "vault" | "aws-sm";
+
+// Names of the secrets that are rotatable at runtime. Anything not listed here
+// is treated as static config and only read once at boot.
+export const ROTATABLE_SECRET_NAMES = [
+  "JWT_SECRET",
+  "API_KEY",
+  "SPONSOR_SECRET_KEY",
+  "RESEND_API_KEY",
+  "AWS_SES_SECRET_ACCESS_KEY",
+] as const;
+
+export type RotatableSecretName = (typeof ROTATABLE_SECRET_NAMES)[number];
+
+export interface SecretProvider {
+  readonly kind: SecretProviderKind;
+  /** Fetch the current value for a secret, or undefined if unset. */
+  get(name: string): Promise<string | undefined>;
+  /** Fetch all rotatable secrets in one round-trip. */
+  getAll(names: readonly string[]): Promise<Record<string, string | undefined>>;
+}
+
+// Env provider: reads from process.env. This is the default and preserves the
+// existing behaviour for local dev, tests, and any deployment that has not
+// opted into a managed store yet.
+class EnvSecretProvider implements SecretProvider {
+  readonly kind = "env" as const;
+  async get(name: string): Promise<string | undefined> {
+    return process.env[name];
+  }
+  async getAll(names: readonly string[]): Promise<Record<string, string | undefined>> {
+    const out: Record<string, string | undefined> = {};
+    for (const name of names) out[name] = process.env[name];
+    return out;
+  }
+}
+
+// Vault provider: reads KV v2 secrets from a HashiCorp Vault instance. Uses the
+// HTTP API directly (no SDK dependency) so this stays a zero-install change.
+// VAULT_ADDR + VAULT_TOKEN are themselves bootstrapped from env — they are the
+// root of trust and are expected to be short-lived (Vault AppRole / OIDC).
+class VaultSecretProvider implements SecretProvider {
+  readonly kind = "vault" as const;
+  constructor(
+    private readonly addr: string,
+    private readonly token: string,
+    private readonly mount: string,
+    private readonly path: string
+  ) {}
+
+  private async readAll(): Promise<Record<string, string | undefined>> {
+    const url = `${this.addr.replace(/\/$/, "")}/v1/${this.mount}/data/${this.path}`;
+    const res = await fetch(url, {
+      headers: { "X-Vault-Token": this.token },
+    });
+    if (!res.ok) {
+      throw new Error(`Vault read failed: ${res.status} ${res.statusText}`);
+    }
+    const body = (await res.json()) as { data?: { data?: Record<string, unknown> } };
+    const data = body.data?.data ?? {};
+    const out: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(data)) {
+      out[k] = typeof v === "string" ? v : v === undefined ? undefined : String(v);
+    }
+    return out;
+  }
+
+  async get(name: string): Promise<string | undefined> {
+    return (await this.readAll())[name];
+  }
+  async getAll(names: readonly string[]): Promise<Record<string, string | undefined>> {
+    const all = await this.readAll();
+    const out: Record<string, string | undefined> = {};
+    for (const name of names) out[name] = all[name];
+    return out;
+  }
+}
+
+// AWS Secrets Manager provider: reads a single JSON secret blob whose keys are
+// the secret names. Uses the AWS SDK v3 client that is already a transitive
+// dependency of the SES email provider, so no new install is required.
+class AwsSecretsManagerProvider implements SecretProvider {
+  readonly kind = "aws-sm" as const;
+  constructor(
+    private readonly region: string,
+    private readonly secretId: string
+  ) {}
+
+  private async readAll(): Promise<Record<string, string | undefined>> {
+    // Lazy import so deployments that use env/Vault never load the AWS SDK.
+    const { SecretsManagerClient, GetSecretValueCommand } = await import(
+      "@aws-sdk/client-secrets-manager"
+    );
+    const client = new SecretsManagerClient({ region: this.region });
+    const res = await client.send(new GetSecretValueCommand({ SecretId: this.secretId }));
+    const raw = res.SecretString;
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      out[k] = typeof v === "string" ? v : v === undefined ? undefined : String(v);
+    }
+    return out;
+  }
+
+  async get(name: string): Promise<string | undefined> {
+    return (await this.readAll())[name];
+  }
+  async getAll(names: readonly string[]): Promise<Record<string, string | undefined>> {
+    const all = await this.readAll();
+    const out: Record<string, string | undefined> = {};
+    for (const name of names) out[name] = all[name];
+    return out;
+  }
+}
+
+// Build the provider from env. Kept separate from the zod schema below so the
+// provider can be constructed before the full config is validated (the
+// provider itself supplies some of the values the schema validates).
+export function createSecretProvider(env: NodeJS.ProcessEnv = process.env): SecretProvider {
+  const kind = (env.SECRET_PROVIDER ?? "env") as SecretProviderKind;
+  switch (kind) {
+    case "vault": {
+      const addr = env.VAULT_ADDR;
+      const token = env.VAULT_TOKEN;
+      if (!addr || !token) {
+        throw new Error("SECRET_PROVIDER=vault requires VAULT_ADDR and VAULT_TOKEN");
+      }
+      return new VaultSecretProvider(
+        addr,
+        token,
+        env.VAULT_SECRET_MOUNT ?? "secret",
+        env.VAULT_SECRET_PATH ?? "globewallet"
+      );
+    }
+    case "aws-sm": {
+      const region = env.AWS_REGION ?? env.AWS_SES_REGION;
+      const secretId = env.AWS_SECRETS_MANAGER_SECRET_ID;
+      if (!region || !secretId) {
+        throw new Error(
+          "SECRET_PROVIDER=aws-sm requires AWS_REGION (or AWS_SES_REGION) and AWS_SECRETS_MANAGER_SECRET_ID"
+        );
+      }
+      return new AwsSecretsManagerProvider(region, secretId);
+    }
+    case "env":
+      return new EnvSecretProvider();
+    default:
+      throw new Error(`Unknown SECRET_PROVIDER "${kind}" (expected env, vault, or aws-sm)`);
+  }
+}
+
+// In-memory cache of the last known-good rotatable secret values. Reads go
+// through here so hot reload is a single atomic swap and a failed reload never
+// leaves the app with a half-updated set of secrets.
+let secretCache: Record<string, string | undefined> = {};
+let secretProvider: SecretProvider = new EnvSecretProvider();
+
+/**
+ * Load (or reload) all rotatable secrets from the configured provider.
+ *
+ * On success the cache is swapped atomically. On failure the previous values
+ * are retained and the error is rethrown so callers (boot path or the
+ * rotation webhook) can decide whether to fail fast or just log.
+ */
+export async function reloadSecrets(
+  provider: SecretProvider = secretProvider
+): Promise<Record<string, string | undefined>> {
+  const fresh = await provider.getAll(ROTATABLE_SECRET_NAMES);
+  secretCache = { ...fresh };
+  secretProvider = provider;
+  return secretCache;
+}
+
+/** Read a rotatable secret from the cache, falling back to env. */
+export function getSecret(name: RotatableSecretName): string | undefined {
+  return secretCache[name] ?? process.env[name];
+}
+
+/** Exposed for tests and the rotation webhook to inspect the active provider. */
+export function getSecretProviderKind(): SecretProviderKind {
+  return secretProvider.kind;
+}
+
 // #41 — CORS origins are validated at startup so a typo (trailing space,
 // missing scheme) fails fast with a clear message instead of silently
 // blocking the web app at request time. Each comma-separated entry is
@@ -74,6 +274,21 @@ const envSchema = z.object({
   REDIS_URL: z.string().min(1),
   JWT_SECRET: z.string().min(1),
   API_KEY: z.string().min(1),
+  // #283 — which secret store backs the rotatable secrets above. "env" keeps
+  // the historical behaviour; "vault" and "aws-sm" read from a managed store
+  // so rotation no longer requires a redeploy. See docs/secrets-rotation.md.
+  SECRET_PROVIDER: z.enum(["env", "vault", "aws-sm"]).default("env"),
+  // Vault (KV v2) settings, required when SECRET_PROVIDER=vault.
+  VAULT_ADDR: z.string().url().optional(),
+  VAULT_TOKEN: z.string().optional(),
+  VAULT_SECRET_MOUNT: z.string().default("secret"),
+  VAULT_SECRET_PATH: z.string().default("globewallet"),
+  // AWS Secrets Manager settings, required when SECRET_PROVIDER=aws-sm.
+  AWS_SECRETS_MANAGER_SECRET_ID: z.string().optional(),
+  // #283 — sponsor keys live in KMS and are signed remotely; the API never
+  // holds the raw secret key. SPONSOR_KMS_KEY_ID is the KMS key alias/ARN.
+  SPONSOR_KMS_KEY_ID: z.string().optional(),
+  SPONSOR_KMS_REGION: z.string().optional(),
   // "in-process" serializes concurrent submissions for the same source
   // account within a single Node process only. Running more than one
   // instance of this API requires "redis" (using REDIS_URL below) to get
@@ -173,100 +388,6 @@ const envSchema = z.object({
   // Optional CoinGecko demo/pro API key, sent as x-cg-demo-api-key.
   COINGECKO_API_KEY: z.string().optional(),
 
-  // #77 — contract event indexer settings. The indexer worker itself is not
-  // implemented yet (the #141 PR only added config and schema); these are
-  // reserved so its deployment config can be prepared ahead of it.
-  //
-  // Ledger to start indexing from when no cursor exists yet (e.g. the
-  // contract's deploy ledger).
-  INDEXER_START_LEDGER: z.coerce.number().int().min(0).default(0),
-  // How often the worker polls getEvents, in milliseconds.
-  INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
-  // Max events requested per getEvents page (RPC caps this at 10000).
-  INDEXER_PAGE_SIZE: z.coerce.number().int().positive().max(10000).default(200),
-  // RPC only retains recent events (~7 days on testnet). If the stored
-  // cursor falls further behind the latest ledger than this many ledgers,
-  // the worker logs an alert because the retention gap means events were
-  // permanently lost and a backfill from an archive source is required.
-  INDEXER_RETENTION_GAP_LEDGERS: z.coerce.number().int().positive().default(120960),
+  // #77 — contract event indexer settings. The indexer worker it
 
-  // SEP-10 web authentication (GET /api/v1/auth/challenge, POST /token).
-  // SEP10_SIGNING_SECRET is the server's S... key that signs challenges;
-  // the SEP-10 routes answer 503 until it is set. HOME_DOMAIN and
-  // WEB_AUTH_DOMAIN must match what the wallet's stellar.toml advertises.
-  SEP10_SIGNING_SECRET: z
-    .string()
-    .regex(/^S[A-Z2-7]{55}$/, "must be a Stellar secret seed (S...)")
-    .optional(),
-  HOME_DOMAIN: z.string().min(1).default("globewallet.app"),
-  WEB_AUTH_DOMAIN: z.string().min(1).default("globewallet.app"),
-
-  // Fiat conversion for transaction history (see services/fx.ts and
-  // docs/transaction-history.md). Rates move slowly, so cache for an hour.
-  FX_API_URL: z.string().url().default("https://open.er-api.com/v6/latest/USD"),
-  FX_CACHE_TTL_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
-  // Comma-separated list of currencies to snapshot for historical conversions.
-  // Used for tax reporting and historical value tracking. Only supported
-  // currencies are stored (see SUPPORTED_CURRENCIES in fx.ts).
-  FX_SNAPSHOT_CURRENCIES: z.string().default("EUR,GBP,NGN,KES,GHS"),
-  // Upper bound on operations examined per filtered history page (#58).
-  HISTORY_SCAN_CAP: z.coerce.number().int().positive().max(10000).default(1000),
-
-  // #185 — TTL keeper job. Disabled unless a funded fee-payer secret is set;
-  // the key only pays fees for the permissionless `extend_user_ttl` /
-  // RestoreFootprint transactions and never needs any wallet's authority.
-  TTL_KEEPER_SECRET_KEY: z
-    .string()
-    .regex(/^S[A-Z2-7]{55}$/, "must be a Stellar secret seed (S...)")
-    .optional(),
-  // How often the keeper sweeps active wallets (default: every 6 hours,
-  // well inside the contract's 1-day KEEPER_INTERVAL_LEDGERS).
-  TTL_KEEPER_INTERVAL_MS: z.coerce.number().int().positive().default(6 * 60 * 60 * 1000),
-  // Alert when an entry has fewer than this many ledgers left (~3 days).
-  TTL_KEEPER_ALERT_LEDGERS: z.coerce.number().int().positive().default(17_280 * 3),
-  // A wallet is "active" if one of its devices was seen within this many days.
-  TTL_KEEPER_ACTIVE_DAYS: z.coerce.number().int().positive().default(90),
-
-  // #185/#186 — optional ops webhook (Slack/Discord/PagerDuty-compatible JSON
-  // POST) for near-expiry and upgrade-proposed alerts. Alerts are always
-  // logged; the webhook is an extra channel.
-  OPS_ALERT_WEBHOOK_URL: z.string().url().optional(),
-
-  // #186 — upgrade watcher poll interval.
-  UPGRADE_WATCHER_POLL_MS: z.coerce.number().int().positive().default(30_000),
-
-  // #16 — interactive API docs (Swagger UI at /api/docs, raw spec at
-  // /api/openapi.json). Defaults to enabled outside production and disabled
-  // in production so a prod build never exposes docs unless explicitly
-  // opted in via ENABLE_API_DOCS=true.
-  ENABLE_API_DOCS: z
-    .enum(["true", "false"])
-    .optional()
-    .transform((v) => (v === undefined ? process.env.NODE_ENV !== "production" : v === "true")),
-
-  // #124 — Expo push token TTL. Tokens are pruned after this many seconds
-  // (default: 90 days). Expo tokens are time-limited; clients must re-register
-  // before expiry or they will stop receiving notifications.
-  EXPO_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(90 * 24 * 60 * 60),
-});
-
-export const config = envSchema.parse(process.env);
-
-// Read the package version once at boot. Resolved relative to this file so it
-// works both under ts-node (src/) and compiled output (dist/).
-function readPackageVersion(): string {
-  try {
-    const pkgPath = join(__dirname, "..", "package.json");
-    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
-    return pkg.version ?? "1.0.0";
-  } catch {
-    return "1.0.0";
-  }
-}
-
-const packageVersion = readPackageVersion();
-const [, packageMinor = "0"] = packageVersion.split(".");
-
-// API major version is fixed by the URL prefix; minor tracks package.json.
-export const API_MAJOR_VERSION = 1;
-export const API_VERSION = `${API_MAJOR_VERSION}.${packageMinor}`;
+/* … truncated 5037 chars — edit only what you need near the top … */

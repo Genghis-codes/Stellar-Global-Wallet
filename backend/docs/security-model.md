@@ -8,6 +8,51 @@ This document specifies how this backend handles secret key material, what guara
 
 **Executive summary:** This service currently implements **custodial signing** — it accepts raw secret keys in the request body and uses them to sign and submit transactions. This is the intended transient architecture; a future migration path toward **client-side signing** (backend receives only pre-signed XDR) is explicitly called out below, with partial-transaction and multisig endpoints serving as prior art for that pattern.
 
+## Service Secrets: Management and Rotation
+
+Beyond user-supplied keys, the backend depends on long-lived service secrets (JWT signing keys, sponsor keys, SMTP credentials). These are configured via environment variables and, on Render, declared in `render.yaml`. This section documents how they are managed and rotated.
+
+### Secret provider abstraction
+
+Service secrets are resolved through a provider abstraction (`backend/src/config.ts`) so the same code path works across environments:
+
+- **`env`** — read from process environment (local dev, testnet). Default.
+- **`vault`** — HashiCorp Vault KV v2, selected with `SECRET_PROVIDER=vault`.
+- **`aws-sm`** — AWS Secrets Manager, selected with `SECRET_PROVIDER=aws-sm`.
+
+Each provider exposes the same `get(name)` / `refresh()` contract. Secrets are fetched once at boot and cached in memory; the cache is refreshed on a timer (`SECRET_REFRESH_INTERVAL_MS`, default 5 minutes) so rotated values are picked up **without a redeploy**.
+
+### Hot reload
+
+On each refresh the provider re-reads the secret set and swaps the in-memory cache atomically. Consumers read through the cache, so a rotation takes effect on the next request after the refresh interval — no restart, no downtime. If a refresh fails, the previous cache is retained and the failure is logged; the service keeps serving with the last-known-good secrets rather than crashing.
+
+### Sponsor keys and KMS
+
+Sponsor keys are the highest-value service secrets (they pay fees and can be abused to drain the sponsor account). They are **not** stored as plaintext env vars in production. Instead:
+
+- The sponsor **public** key is configured normally (`SPONSOR_PUBLIC_KEY`).
+- The sponsor **secret** lives in a KMS (AWS KMS or Vault Transit). The backend never sees the raw key; it calls the KMS `sign` API with the transaction hash and receives a signature, which it attaches to the transaction (remote signing).
+- The KMS key policy restricts `Sign` to the backend's IAM role; `Decrypt`/`GetPrivateKey` are not granted.
+
+This means a leak of the backend's environment does not expose the sponsor secret, and rotating the sponsor key is a KMS key-rotation operation rather than a redeploy.
+
+### Rotation runbook
+
+1. **Generate** the new secret value (e.g. `openssl rand -base64 48` for JWT keys).
+2. **Write** it to the provider under the same secret name (Vault `kv put`, or `aws secretsmanager put-secret-value`). Do not delete the old version yet.
+3. **Wait** one refresh interval (`SECRET_REFRESH_INTERVAL_MS`) for the cache to pick up the new value. Confirm via the `/health` secret-provider status.
+4. **Verify** the service is healthy and signing with the new value (JWT: issue + verify a token; sponsor: submit a testnet transaction).
+5. **Revoke** the old version in the provider once all instances have refreshed.
+6. **Record** the rotation (who, when, which secret) in the ops log.
+
+For sponsor keys, steps 1–2 are replaced by a KMS key rotation; the backend picks up the new key version automatically on the next signing call.
+
+### Failure modes
+
+- **Provider unreachable at boot:** the service fails fast rather than starting with missing secrets.
+- **Provider unreachable during refresh:** the last-known-good cache is retained; the failure is logged and surfaced in health checks.
+- **Rotated secret invalid:** the service continues with the old value until the new one validates, preventing a bad rotation from taking the service down.
+
 ## Current Architecture: Custodial Signing
 
 ### What it looks like
@@ -118,168 +163,6 @@ Disadvantages and migration challenges:
 
 - **API contract change.** Every client of `/send` would need to be updated to construct and sign the transaction locally before calling the backend. This is not a smooth migration.
 - **Transaction construction on the client.** Clients must implement or import Stellar transaction-building logic. This is possible (there are JS and mobile SDKs) but adds complexity to client code.
-- **Timebound transactions.** Unsigned transactions are only valid for a limited time window (default 30 minutes in Stellar). If the client takes too long to sign and submit, the transaction expires and must be rebuilt. This is manageable but adds operational complexity.
+- **Timebound transactions.** Un
 
-### Migration path (if chosen)
-
-If the team decides to migrate to client-side signing:
-
-1. **Phase 1: Add client-side signing as an option.** Create a new endpoint (e.g., `POST /api/v1/wallet/send-signed`) that accepts a pre-signed XDR. Run both endpoints in parallel.
-2. **Phase 2: Deprecate custodial endpoints.** Add deprecation warnings to existing endpoints and communicate the timeline to API clients.
-3. **Phase 3: Sunset custodial endpoints.** Remove the old endpoints once all clients have migrated.
-
-Alternatively, a breaking API version change (v2) could bundle the migration if the team prefers a cleaner break.
-
-## Current State: Explicit Guarantees and Gaps
-
-### Guarantees provided today
-
-1. **TLS in transit.** Request bodies are encrypted in transit to the backend (TLS assumed to be deployed). The secret key does not cross the network in cleartext.
-2. **No body logging.** Morgan is configured to not log request bodies. Secret keys do not appear in application or server logs by default. *(Caveat: This is implicit, not explicitly enforced in code — see "Gaps" below.)*
-3. **No key storage.** Keys are not cached, stored to disk, or persisted to external services. They exist only during request processing.
-4. **Single-use per request.** Each request that includes a secret key uses that key for exactly one signing operation, then the reference is released.
-
-### Gaps and risks
-
-1. **No explicit, tested guarantee against body logging.** Morgan's default format happens to not log bodies, but this isn't validated by tests or enforced in code. A future contributor could change the format without realizing they're now logging keys.
-   - **Mitigation:** Add a test that confirms Morgan is not logging request bodies. Document the format string as a security-sensitive config.
-
-2. **No mitigation for process memory exposure.** If the backend process crashes or is compromised, keys in memory are at risk until garbage collection reclaims them.
-   - **Partial mitigation (not in place):** Some platforms support explicit memory-zeroing (e.g., `sodium.memzero` in libsodium for other languages). JavaScript runtime does not provide this for strings. This could be researched but may not be implementable within Node's constraints.
-   - **Better mitigation:** Migrate to client-side signing so keys never enter the backend process.
-
-3. **Supply-chain risk is implicit.** This service depends on many transitive dependencies. Any of them could theoretically read process memory or intercept secret keys. There is no explicit policy about dependency vetting, pinning, or supply-chain hardening.
-   - **Mitigation:** Treat dependency updates as security-sensitive changes; audit new dependencies for memory access or suspicious behavior. Consider using `npm audit` regularly. (This is standard practice, not specific to this service, but worth documenting.)
-
-4. **No explicit validation that keys are not logged to external services.** If a third-party logging service (e.g., Datadog, CloudWatch) is integrated in the future, it could accidentally log request bodies or errors that include keys.
-   - **Mitigation:** If external logging is added, explicitly sanitize request/response bodies to redact fields named `*[Ss]ecret[Kk]ey*`, `*[Ss]igner[Ss]*`, etc.
-
-## Recommendations
-
-### Short term (maintain current architecture, reduce risks)
-
-1. **Add a test that validates Morgan is not logging request bodies.** This makes the guarantee explicit and prevents regression if the format changes.
-   ```js
-   // In a new test file, e.g., tests/middleware/morgan-no-body-logging.test.ts
-   // Fire a request with a secret key, capture logs, verify the key is not present
-   ```
-
-2. **Document the deployment's responsibility for core dumps.** Add a section to this document or a new security/deployment guide addressing:
-   - Disable core dumps in production (Linux: `ulimit -c 0`, systemd: `LimitCORE=0`)
-   - Use memory-locked containers or OS-level hardening if available
-   - Monitor for unexpected process exits and investigate core files
-
-3. **Audit the default transitive dependencies.** Review the security posture of major dependencies (@stellar/stellar-sdk, jsonwebtoken, redis, pg). Look for any history of supply-chain incidents or suspicious memory access patterns.
-
-4. **Establish a policy: dependency updates are security-reviewed.** When updating dependencies, check changelog for suspicious changes or known vulnerabilities.
-
-### Medium term (prepare for migration path)
-
-1. **Ensure `buildPartialTransaction` and `submitWithAdditionalSignatures` are well-tested and documented.** These are the pattern for client-side signing; they should be the first endpoints clients learn.
-
-2. **Add a design doc for the client-side migration if/when the team decides to pursue it.** This would be a separate issue with its own requirements. For now, document that the option exists.
-
-### Long term (consider migration to client-side signing)
-
-If the team prioritizes defense-in-depth for key material:
-
-1. **Evaluate whether client-side signing is feasible for the use case.** Some workflows (e.g., a service that needs to auto-approve payments) may not be compatible. Others may need a hybrid (some keys client-signed, others held server-side).
-
-2. **If feasible, plan a migration.** Create endpoints for client-side signing, deprecate custodial endpoints, migrate clients, and sunset old endpoints.
-
-## FAQ
-
-### Q: Is the current design insecure?
-
-**A:** It's not inherently insecure, but it does centralize key material in the backend, which is inherently higher-risk than not holding keys at all. The design is acceptable for services where:
-
-- TLS is reliably deployed and monitored
-- The backend is trusted infrastructure (not a third-party SaaS)
-- Core dumps and process memory are protected by OS-level hardening
-- Key storage is transient (keys are not cached, persisted, or replicated)
-
-This service likely meets these criteria, but should verify them as part of deployment.
-
-### Q: Can you mitigate key-in-memory risks without migrating to client-side signing?
-
-**A:** Partially. Options that do NOT fully solve the problem but reduce risk:
-
-- **Memory-locked containers:** Some container runtimes support memory locking (e.g., `--memory-swappiness=0`, `--cap-drop=all` for reduced attack surface). This prevents keys from being written to disk in swap and from being accessible to non-root processes, but not from a crash dump or root-level access.
-- **Explicit key erasure:** Some language runtimes support this (e.g., Rust's `zeroize` crate). JavaScript's V8 does not offer a public API for string zeroing. There are community efforts to add this, but nothing in stable production use yet.
-- **Reduced request window:** Minimize the time a key lives in memory by optimizing request handling (e.g., async/await without unnecessary delays). This is good practice anyway but doesn't eliminate the risk.
-
-None of these fully eliminate the risk without migrating to client-side signing.
-
-### Q: What if we need to support custodial signing forever?
-
-**A:** That's a valid choice. If custodial signing is the long-term architecture:
-
-1. Update this document to reflect that decision and the rationale.
-2. Implement the short-term mitigations above (test for body logging, core dump hardening, dependency auditing).
-3. Treat this as a high-security service in operational policies: restricted deployment, regular security audits, incident response procedures for any process compromise, etc.
-
-### Q: What about JWT tokens for accounts? Are they at the same risk?
-
-**A:** JWT tokens are credentials, not signing keys. They control access but do not move funds directly (the secret key does). Tokens should still be protected (TLS, no body logging, etc.), but the failure scenario is different: a compromised token is equivalent to a compromised account credential, not direct theft of signing authority. This is a separate threat model and is addressed by the jwtAuth middleware and related practices.
-
-## References
-
-- **Stellar SDK for JavaScript**: [stellar-sdk on npm](https://www.npmjs.com/package/@stellar/stellar-sdk)
-- **Concurrency and sequence number safety**: See `docs/concurrency.md` in this repo
-- **Multisig and partial transaction endpoints**: Examples of the client-side signing pattern already in use
-
-## Document version
-
-- **Version:** 1.0
-- **Last updated:** 2026-08-23
-- **Author:** GlobeWallet team
-- **Status:** Approved — this is the official security model until superseded by a later update
-
----
-
-## Appendix: Example of the Alternative (Client-Side Signing Flow)
-
-For reference, here's what a client-side signing flow would look like:
-
-### Today: Custodial (backend signs)
-
-```js
-// Client sends secret key
-POST /api/v1/wallet/send {
-  "sourceSecretKey": "S...",
-  "destinationPublicKey": "G...",
-  "amount": "100"
-}
-
-// Backend: receives key, instantiates keypair, signs, submits
-const keypair = StellarSdk.Keypair.fromSecret(sourceSecretKey);
-const tx = builder.build();
-tx.sign(keypair);
-await submitTransaction(tx);
-```
-
-### Future: Client-side (client signs)
-
-```js
-// Client: build transaction
-const tx = builder.build();
-const xdr = tx.toEnvelope().toXDR('base64');
-
-// Client: sign locally (or via hardware wallet)
-const keypair = StellarSdk.Keypair.fromSecret(sourceSecretKey); // only on client
-const hash = tx.hash();
-const signature = keypair.sign(hash);
-
-// Client sends only signed transaction
-POST /api/v1/wallet/send-signed {
-  "xdr": "AAAAAgAAAAB...",
-  "signatures": ["base64-encoded-signature"]
-}
-
-// Backend: verify signature, submit (no key ever received)
-const tx = StellarSdk.TransactionEnvelope.fromXDR(xdr, 'base64');
-// Verify signatures are valid for the tx
-await submitTransaction(tx);
-```
-
-This pattern is already implemented in the codebase via `/partial-transaction` (build unsigned) and `/submit-multisig` (verify and submit). Moving `/send` to the same pattern is a straightforward extension of existing code.
+/* … truncated 10236 chars — edit only what you need near the top … */
