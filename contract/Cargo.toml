@@ -64,6 +64,11 @@ soroban-sdk = { version = "21.7.7" }
 [patch.crates-io]
 ed25519-dalek = { path = "vendor/ed25519-dalek-2.2.0" }
 
+# Release profile tuned for deploy/upgrade fee minimisation (issue #281).
+# `opt-level = "z"` + `lto = true` + `codegen-units = 1` + `strip = "symbols"`
+# + `panic = "abort"` are the standard Soroban size-reduction set; keep them
+# together — dropping any one of them measurably grows the WASM. `overflow-checks`
+# stays on: it is a correctness guarantee, not a size knob.
 [profile.release]
 opt-level = "z"
 overflow-checks = true
