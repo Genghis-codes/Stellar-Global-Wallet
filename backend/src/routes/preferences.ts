@@ -1,7 +1,6 @@
 import { Router } from "express";
-import { Pool } from "pg";
 import { z } from "zod";
-import { pool } from "../db";
+import { Queryable, rawPool, TransactionalPool, withAccountContext } from "../db";
 import { ValidationError } from "../errors/appError";
 import { jwtAuth } from "../middleware/jwtAuth";
 
@@ -39,7 +38,7 @@ export function parsePreferences(input: unknown): Preferences {
   return result.data;
 }
 
-export async function ensurePreferencesTable(db: Pool): Promise<void> {
+export async function ensurePreferencesTable(db: Queryable): Promise<void> {
   await db.query(`
     CREATE TABLE IF NOT EXISTS user_preferences (
       account VARCHAR(56) PRIMARY KEY,
@@ -55,28 +54,40 @@ export interface PreferencesStore {
 }
 
 export class PgPreferencesStore implements PreferencesStore {
-  constructor(private readonly db: Pool) {}
+  constructor(private readonly db: TransactionalPool) {}
 
   async get(account: string): Promise<Preferences> {
-    const { rows } = await this.db.query<{ preferences: Preferences }>(
-      "SELECT preferences FROM user_preferences WHERE account = $1",
-      [account]
+    return withAccountContext(
+      account,
+      async (tx) => {
+        const { rows } = await tx.query<{ preferences: Preferences }>(
+          "SELECT preferences FROM user_preferences WHERE account = $1",
+          [account]
+        );
+        return rows[0]?.preferences ?? {};
+      },
+      this.db
     );
-    return rows[0]?.preferences ?? {};
   }
 
   /** Shallow-merge `patch` into the stored preferences (PUT semantics per key). */
   async merge(account: string, patch: Preferences): Promise<Preferences> {
-    const { rows } = await this.db.query<{ preferences: Preferences }>(
-      `INSERT INTO user_preferences (account, preferences)
-       VALUES ($1, $2::jsonb)
-       ON CONFLICT (account) DO UPDATE
-         SET preferences = user_preferences.preferences || EXCLUDED.preferences,
-             updated_at = NOW()
-       RETURNING preferences`,
-      [account, JSON.stringify(patch)]
+    return withAccountContext(
+      account,
+      async (tx) => {
+        const { rows } = await tx.query<{ preferences: Preferences }>(
+          `INSERT INTO user_preferences (account, preferences)
+           VALUES ($1, $2::jsonb)
+           ON CONFLICT (account) DO UPDATE
+             SET preferences = user_preferences.preferences || EXCLUDED.preferences,
+                 updated_at = NOW()
+           RETURNING preferences`,
+          [account, JSON.stringify(patch)]
+        );
+        return rows[0].preferences;
+      },
+      this.db
     );
-    return rows[0].preferences;
   }
 }
 
@@ -84,7 +95,9 @@ export class PgPreferencesStore implements PreferencesStore {
  * GET /api/v1/me/preferences  — the caller's preferences ({} when unset)
  * PUT /api/v1/me/preferences  — set any subset of keys; others are kept
  */
-export function createPreferencesRouter(store: PreferencesStore = new PgPreferencesStore(pool)): Router {
+export function createPreferencesRouter(
+  store: PreferencesStore = new PgPreferencesStore(rawPool)
+): Router {
   const router = Router();
   router.use(jwtAuth);
 

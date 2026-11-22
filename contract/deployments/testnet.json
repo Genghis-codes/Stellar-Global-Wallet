@@ -3,15 +3,17 @@
   "rpcUrl": "https://soroban-testnet.stellar.org",
   "networkPassphrase": "Test SDF Network ; September 2015",
   "contracts": {
-    "globeWallet": "CBGLPMNSM4FWMIZ6FFBSRN7FNVCHCI2SLZNODA27LEOXFPLWNYEAEP3K
-9a61356bf1dd52c2084c8fbdfae35d3d0e9d6d5eb5bceb7f1ad4febe188dfaa0",
-    "tokenWrapper": "CBGLPMNSM4FWMIZ6FFBSRN7FNVCHCI2SLZNODA27LEOXFPLWNYEAEP3K
-4f92d6e3bf3228d486aa8491c107e3ea595d2cbaebf18c3d8e578c7406a4b121"
+    "globeWallet": "CBGLPMNSM4FWMIZ6FFBSRN7FNVCHCI2SLZNODA27LEOXFPLWNYEAEP3K",
+    "tokenWrapper": "CBGLPMNSM4FWMIZ6FFBSRN7FNVCHCI2SLZNODA27LEOXFPLWNYEAEP3K"
   },
   "wasmHashes": {
     "globeWallet": "9a61356bf1dd52c2084c8fbdfae35d3d0e9d6d5eb5bceb7f1ad4febe188dfaa0",
     "tokenWrapper": "4f92d6e3bf3228d486aa8491c107e3ea595d2cbaebf18c3d8e578c7406a4b121"
   },
   "deployedAt": "2026-10-17T17:40:38Z",
-  "gitSha": "adcf084dbedbea263da527625ce76fac736dc081"
+  "gitSha": "adcf084dbedbea263da527625ce76fac736dc081",
+  "resetDetection": {
+    "ledgerSequence": 0,
+    "lastVerifiedAt": "2026-10-17T17:40:38Z"
+  }
 }

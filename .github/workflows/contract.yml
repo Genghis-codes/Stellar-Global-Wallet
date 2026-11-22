@@ -9,6 +9,10 @@ on:
     paths:
       - "contract/**"
       - ".github/workflows/contract.yml"
+  schedule:
+    # Issue #286: weekly early-warning run against the next protocol/SDK.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -32,6 +36,38 @@ jobs:
 
       - name: Test workspace
         run: cargo test --workspace
+
+  next-protocol:
+    # Issue #286: run the contract workspace against the next soroban-sdk so
+    # protocol upgrades surface as early warnings instead of surprises.
+    # Only runs on the weekly schedule or manual dispatch, never on PRs.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contract
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Bump soroban-sdk to the latest published version
+        run: |
+          cargo update -p soroban-sdk --precise "$(cargo search soroban-sdk --limit 1 | sed -E 's/^soroban-sdk = "([^"]+)".*/\1/')"
+
+      - name: Check workspace against next soroban-sdk
+        run: cargo check --workspace --all-targets
+
+      - name: Test workspace against next soroban-sdk
+        run: cargo test --workspace
+
+      - name: Report breaking changes
+        if: failure()
+        run: |
+          echo "::error::Next-protocol run failed. Record the breaking change in contract/docs/UPGRADE_CHECKLIST.md and open a tracking issue."
 
   supply-chain:
     # Issue #183: advisories, licenses, banned crates, and proof that the

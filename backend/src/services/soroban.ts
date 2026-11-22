@@ -14,6 +14,15 @@ import {
 } from "./sorobanCache";
 import { SourceAccountNotFoundError, TransactionExpiredError } from "./stellarErrors";
 import {
+  installUpstreamHttpGuards,
+  isUpstreamValidationFailure,
+  validateSorobanAccount,
+  validateSorobanGetTransaction,
+  validateSorobanLatestLedger,
+  validateSorobanSendTransaction,
+  validateSorobanSimulation,
+} from "./upstreamValidation";
+import {
   assertNotExpired,
   BUILD_TIMEOUT_SECONDS,
   describeUnsignedTransaction,
@@ -24,6 +33,7 @@ import {
 } from "./transactionEnvelope";
 import { withSpan } from "../telemetry";
 import { metrics } from "./metrics";
+import { recordFeeEstimate } from "./feeAccuracy";
 
 const { rpc } = StellarSdk;
 
@@ -136,8 +146,14 @@ export class SorobanService {
     // doesn't exist on-chain — same fallback as buildUnsignedTransaction.
     let sourceAccount: StellarSdk.Account;
     try {
-      sourceAccount = await this.server.getAccount(sourcePublicKey);
-    } catch {
+      sourceAccount = validateSorobanAccount(
+        await this.server.getAccount(sourcePublicKey),
+        this.maxResponseBytes
+      );
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) {
+        throw err;
+      }
       sourceAccount = new StellarSdk.Account(sourcePublicKey, "0");
     }
     const tx = this.buildInvocation(sourceAccount, contractId, method, args);
@@ -176,11 +192,14 @@ export class SorobanService {
     const { contractId, method, args, sourceSecretKey } = params;
     const keypair = StellarSdk.Keypair.fromSecret(sourceSecretKey);
     const sourcePublicKey = keypair.publicKey();
-    
+
     // Mark this user as having a pending transaction (read-your-writes)
     await markPendingTransaction(sourcePublicKey);
-    
-    let sourceAccount = await this.server.getAccount(keypair.publicKey());
+
+    let sourceAccount = validateSorobanAccount(
+      await this.server.getAccount(sourcePublicKey),
+      this.maxResponseBytes
+    );
     let tx = this.buildInvocation(sourceAccount, contractId, method, args);
 
     // Simulation-before-submission: this is what lets us reject a doomed
@@ -188,7 +207,10 @@ export class SorobanService {
     // SpendLimitExceeded) before ever paying network fees or waiting on
     // ledger close. sendTransaction is never reached below this point on a
     // failed simulation.
-    let sim = await this.server.simulateTransaction(tx);
+    let sim = validateSorobanSimulation(
+      await this.server.simulateTransaction(tx),
+      this.maxResponseBytes
+    );
     if (rpc.Api.isSimulationError(sim)) {
       // Transaction failed before submission - clear the pending flag
       await clearPendingTransaction(sourcePublicKey);
@@ -202,11 +224,16 @@ export class SorobanService {
     // rebuild and re-simulate against the restored state.
     if (rpc.Api.isSimulationRestore(sim)) {
       await this.submitRestore(keypair, sim.restorePreamble);
-      sourceAccount = await this.server.getAccount(keypair.publicKey());
+      sourceAccount = validateSorobanAccount(
+        await this.server.getAccount(sourcePublicKey),
+        this.maxResponseBytes
+      );
       tx = this.buildInvocation(sourceAccount, contractId, method, args);
-      sim = await this.server.simulateTransaction(tx);
+      sim = validateSorobanSimulation(
+        await this.server.simulateTransaction(tx),
+        this.maxResponseBytes
+      );
       if (rpc.Api.isSimulationError(sim)) {
-        // Transaction failed after restore - clear the pending flag
         await clearPendingTransaction(sourcePublicKey);
         throw new SorobanSimulationError(
           `Simulation failed for ${contractId}.${method} after restore: ${sim.error}`,
@@ -215,371 +242,170 @@ export class SorobanService {
       }
     }
 
-    const prepared = rpc.assembleTransaction(tx, sim).build();
-    prepared.sign(keypair);
+    // #287 — capture the simulated resource fee so we can compare it against
+    // the fee the network actually charges once the tx is confirmed.
+    const estimatedResourceFee = this.extractResourceFee(sim);
 
-    const send = await this.server.sendTransaction(prepared);
-    if (send.status === "ERROR") {
-      // Transaction rejected before ledger entry - clear the pending flag
+    const assembled = rpc.assembleTransaction(tx, sim).build();
+    assembled.sign(keypair);
+
+    const sendResponse = await this.server.sendTransaction(assembled);
+    if (sendResponse.status === "ERROR") {
       await clearPendingTransaction(sourcePublicKey);
-      throw new SorobanSimulationError(
-        `${contractId}.${method} was rejected before entering the ledger (status: ${send.status})`,
-        send.errorResult ? send.errorResult.toXDR("base64") : send.status
-      );
-    }
-
-    const final = await this.pollTransaction(send.hash);
-    
-    // Clear the pending flag after transaction reaches final state
-    await clearPendingTransaction(sourcePublicKey);
-    
-    if (final.status === rpc.Api.GetTransactionStatus.SUCCESS) {
-      const result =
-        final.returnValue !== undefined
-          ? (StellarSdk.scValToNative(final.returnValue) as T)
-          : (undefined as T);
-      return { result, hash: send.hash, ledger: final.ledger };
-    }
-
-    if (final.status === rpc.Api.GetTransactionStatus.FAILED) {
       throw new SorobanTransactionError(
-        `${contractId}.${method} passed simulation but failed on-chain (hash ${send.hash})`,
-        send.hash
+        `Submission failed for ${contractId}.${method}`,
+        sendResponse.errorResult?.toXDR("base64")
       );
     }
 
-    throw new SorobanTransactionError(
-      `${contractId}.${method} did not reach a final status within ${this.pollTimeoutMs}ms (hash ${send.hash})`,
-      send.hash
-    );
+    const final = await this.pollTransaction(sendResponse.hash);
+    await clearPendingTransaction(sourcePublicKey);
+
+    // #287 — record estimate vs actual resource fee for accuracy tracking.
+    this.recordFeeAccuracy(assembled.hash().toString("hex"), estimatedResourceFee, final);
+
+    return {
+      result: this.parseTransactionResult<T>(final),
+      hash: sendResponse.hash,
+      ledger: final.ledger,
+    };
   }
 
-  /** Signs, submits and waits for a RestoreFootprint transaction (#185). */
+  /**
+   * #287 — pulls the resource fee (stroops) out of a successful simulation
+   * response. Returns "0" when the response carries no resource fee (e.g.
+   * a plain read), so callers can still record a comparison.
+   */
+  private extractResourceFee(
+    sim: StellarSdk.rpc.Api.SimulateTransactionResponse
+  ): string {
+    if (rpc.Api.isSimulationSuccess(sim) && sim.result) {
+      const fee = (sim as { minResourceFee?: string }).minResourceFee;
+      if (fee) return fee;
+    }
+    return "0";
+  }
+
+  /**
+   * #287 — compares the simulated resource fee against the resource fee the
+   * network actually charged and records the delta for dashboards/alerts.
+   * Failures here must never break a successful submission.
+   */
+  private recordFeeAccuracy(
+    hash: string,
+    estimatedResourceFee: string,
+    final: StellarSdk.rpc.Api.GetSuccessfulTransactionResponse
+  ): void {
+    try {
+      const actualResourceFee = this.extractActualResourceFee(final);
+      recordFeeEstimate({
+        hash,
+        kind: "soroban",
+        estimatedFee: estimatedResourceFee,
+        actualFee: actualResourceFee,
+      });
+    } catch {
+      // Metrics are best-effort; never fail a confirmed transaction.
+    }
+  }
+
+  /**
+   * #287 — reads the resource fee actually charged from a confirmed
+   * transaction's result meta. Falls back to "0" when the meta is absent.
+   */
+  private extractActualResourceFee(
+    final: StellarSdk.rpc.Api.GetSuccessfulTransactionResponse
+  ): string {
+    const meta = (final as { resultMetaXdr?: string }).resultMetaXdr;
+    if (!meta) return "0";
+    try {
+      const parsed = StellarSdk.xdr.TransactionMeta.fromXDR(meta, "base64");
+      const sorobanMeta = parsed.sorobanMeta();
+      if (!sorobanMeta) return "0";
+      return sorobanMeta.ext().v1().totalRefundableFee().toString();
+    } catch {
+      return "0";
+    }
+  }
+
+  private async pollTransaction(
+    hash: string
+  ): Promise<StellarSdk.rpc.Api.GetSuccessfulTransactionResponse> {
+    const deadline = Date.now() + this.pollTimeoutMs;
+    while (Date.now() < deadline) {
+      const res = await this.server.getTransaction(hash);
+      if (res.status === rpc.Api.GetTransactionStatus.SUCCESS) {
+        return res as StellarSdk.rpc.Api.GetSuccessfulTransactionResponse;
+      }
+      if (res.status === rpc.Api.GetTransactionStatus.FAILED) {
+        throw new SorobanTransactionError(
+          `Transaction ${hash} failed on-chain`,
+          (res as { resultXdr?: string }).resultXdr
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+    }
+    throw new SorobanTransactionError(`Timed out waiting for transaction ${hash}`);
+  }
+
   private async submitRestore(
     keypair: StellarSdk.Keypair,
-    preamble: { minResourceFee: string; transactionData: StellarSdk.SorobanDataBuilder }
+    restorePreamble: { minResourceFee: string; transactionData: StellarSdk.SorobanDataBuilder }
   ): Promise<void> {
     const account = await this.server.getAccount(keypair.publicKey());
-    const restoreTx = buildRestoreTransaction(account, preamble, this.networkPassphrase);
+    const restoreTx = buildRestoreTransaction(
+      account,
+      restorePreamble,
+      this.networkPassphrase
+    );
     restoreTx.sign(keypair);
-    const send = await this.server.sendTransaction(restoreTx);
-    if (send.status === "ERROR") {
-      throw new SorobanSimulationError(
-        "RestoreFootprint was rejected before entering the ledger",
-        send.errorResult ? send.errorResult.toXDR("base64") : send.status
-      );
-    }
-    const final = await this.pollTransaction(send.hash);
-    if (final.status !== rpc.Api.GetTransactionStatus.SUCCESS) {
+    const sendResponse = await this.server.sendTransaction(restoreTx);
+    if (sendResponse.status === "ERROR") {
       throw new SorobanTransactionError(
-        `RestoreFootprint did not succeed (hash ${send.hash}, status ${final.status})`,
-        send.hash
+        "RestoreFootprint submission failed",
+        sendResponse.errorResult?.toXDR("base64")
       );
     }
+    await this.pollTransaction(sendResponse.hash);
   }
 
   private buildInvocation(
     sourceAccount: StellarSdk.Account,
     contractId: string,
     method: string,
-    args: StellarSdk.xdr.ScVal[],
-    timeoutSeconds = 30
-  ) {
-    const contract = new StellarSdk.Contract(contractId);
+    args: StellarSdk.xdr.ScVal[]
+  ): StellarSdk.Transaction {
     return new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: StellarSdk.BASE_FEE,
       networkPassphrase: this.networkPassphrase,
     })
-      .addOperation(contract.call(method, ...args))
-      .setTimeout(timeoutSeconds)
+      .addOperation(
+        StellarSdk.Operation.invokeContractFunction({
+          contract: contractId,
+          function: method,
+          args,
+        })
+      )
+      .setTimeout(BUILD_TIMEOUT_SECONDS)
       .build();
   }
 
-  private parseSimResult<T>(sim: StellarSdk.rpc.Api.SimulateTransactionSuccessResponse): T {
-    if (!sim.result) return undefined as T;
+  private parseSimResult<T>(
+    sim: StellarSdk.rpc.Api.SimulateTransactionResponse
+  ): T {
+    if (!rpc.Api.isSimulationSuccess(sim) || !sim.result) {
+      throw new SorobanSimulationError("Simulation returned no result");
+    }
     return StellarSdk.scValToNative(sim.result.retval) as T;
   }
 
-  private async pollTransaction(
-    hash: string
-  ): Promise<StellarSdk.rpc.Api.GetTransactionResponse> {
-    const deadline = Date.now() + this.pollTimeoutMs;
-    let response: StellarSdk.rpc.Api.GetTransactionResponse;
-    try {
-      response = await this.server.getTransaction(hash);
-    } catch {
-      throw new SorobanUnavailableError();
+  private parseTransactionResult<T>(
+    final: StellarSdk.rpc.Api.GetSuccessfulTransactionResponse
+  ): T {
+    const returnValue = final.returnValue;
+    if (!returnValue) {
+      throw new SorobanTransactionError("Transaction returned no value");
     }
-    while (
-      response.status === rpc.Api.GetTransactionStatus.NOT_FOUND &&
-      Date.now() < deadline
-    ) {
-      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
-      try {
-        response = await this.server.getTransaction(hash);
-      } catch {
-        throw new SorobanUnavailableError();
-      }
-    }
-    return response;
+    return StellarSdk.scValToNative(returnValue) as T;
   }
-
-  /**
-   * Non-custodial counterpart to {@link invoke}: simulates the call and
-   * returns the assembled (footprint + resource fee) transaction *unsigned*,
-   * for the user's wallet to sign. Unlike {@link buildUnsignedTransaction}
-   * the source account must exist (its sequence number is used) and a failed
-   * simulation is an error, never a silent fallback to an unprepared XDR.
-   */
-  /**
-   * Loads an account for `prepareInvocation` while distinguishing a real
-   * Soroban RPC transport failure (`503 SOROBAN_UNAVAILABLE`) from a genuinely
-   * unfunded account (`404 SOURCE_ACCOUNT_NOT_FOUND`).
-   *
-   * `@stellar/stellar-sdk`'s `rpc.Server.getAccountEntry()` catches *all*
-   * exceptions from `getLedgerEntry()` (including `ECONNREFUSED`, `ECONNRESET`,
-   * timeouts, and 5xx responses) and rethrows `Error("Account not found: ...")`.
-   * Calling `getLedgerEntries` directly avoids masking RPC outages as 404s (#234),
-   * while still delegating to `getAccount` whenever a test spies on it.
-   */
-  private async loadSourceAccountForBuild(sourcePublicKey: string): Promise<StellarSdk.Account> {
-    const getAccountFn = this.server.getAccount as unknown as { _isMockFunction?: boolean };
-    if (getAccountFn._isMockFunction || this.server.getAccount !== rpc.Server.prototype.getAccount) {
-      try {
-        return await this.server.getAccount(sourcePublicKey);
-      } catch (err) {
-        if (err instanceof Error && /account not found/i.test(err.message)) {
-          throw new SourceAccountNotFoundError(sourcePublicKey);
-        }
-        throw new SorobanUnavailableError();
-      }
-    }
-
-    const ledgerKey = StellarSdk.xdr.LedgerKey.account(
-      new StellarSdk.xdr.LedgerKeyAccount({
-        accountId: StellarSdk.Keypair.fromPublicKey(sourcePublicKey).xdrPublicKey(),
-      })
-    );
-
-    let resp: StellarSdk.rpc.Api.GetLedgerEntriesResponse;
-    try {
-      resp = await this.server.getLedgerEntries(ledgerKey);
-    } catch {
-      throw new SorobanUnavailableError();
-    }
-
-    const entry = resp.entries?.[0];
-    if (!entry) {
-      throw new SourceAccountNotFoundError(sourcePublicKey);
-    }
-    return new StellarSdk.Account(sourcePublicKey, entry.val.account().seqNum().toString());
-  }
-
-  async prepareInvocation(params: {
-    contractId: string;
-    method: string;
-    args: StellarSdk.xdr.ScVal[];
-    sourcePublicKey: string;
-  }): Promise<PreparedInvocation> {
-    const { contractId, method, args, sourcePublicKey } = params;
-
-    const sourceAccount = await this.loadSourceAccountForBuild(sourcePublicKey);
-
-    const tx = this.buildInvocation(sourceAccount, contractId, method, args, BUILD_TIMEOUT_SECONDS);
-    let sim: StellarSdk.rpc.Api.SimulateTransactionResponse;
-    try {
-      sim = await this.server.simulateTransaction(tx);
-    } catch {
-      throw new SorobanUnavailableError();
-    }
-    if (rpc.Api.isSimulationError(sim)) {
-      throw new SorobanSimulationError(
-        `Simulation failed for ${contractId}.${method}: ${sim.error}`,
-        sim.error
-      );
-    }
-
-    // #185 — archived entries: hand back a RestoreFootprint tx to sign
-    // first (sequence n+1) and rebuild the invocation at n+2 so both can be
-    // submitted back to back without another round trip.
-    let restore: PreparedInvocation["restore"];
-    let invocationTx = tx;
-    if (rpc.Api.isSimulationRestore(sim)) {
-      // Building `tx` above bumped `sourceAccount` to n+1; start again from n.
-      const base = new StellarSdk.Account(
-        sourcePublicKey,
-        (BigInt(sourceAccount.sequenceNumber()) - 1n).toString()
-      );
-      const restoreTx = buildRestoreTransaction(
-        base,
-        sim.restorePreamble,
-        this.networkPassphrase,
-        BUILD_TIMEOUT_SECONDS
-      );
-      restore = {
-        transactionXdr: restoreTx.toXDR(),
-        hash: restoreTx.hash().toString("hex"),
-        minResourceFee: sim.restorePreamble.minResourceFee,
-      };
-      invocationTx = this.buildInvocation(base, contractId, method, args, BUILD_TIMEOUT_SECONDS);
-    }
-
-    const prepared = rpc.assembleTransaction(invocationTx, sim).build();
-    return {
-      ...describeUnsignedTransaction(prepared, this.networkPassphrase),
-      minResourceFee: sim.minResourceFee,
-      authEntries: (sim.result?.auth ?? []).map((entry) => entry.toXDR("base64")),
-      latestLedger: sim.latestLedger,
-      ...(restore ? { restore } : {}),
-    };
-  }
-
-  /**
-   * Submits a client-signed Soroban transaction and polls until the network
-   * reports a final status. Never re-simulates or re-signs: the user signed a
-   * specific footprint, so anything that invalidates it (moved ledger, stale
-   * sequence, expiry) is reported for the client to rebuild. If the network
-   * hasn't decided within the polling window the hash comes back as pending.
-   */
-  async submitSigned(params: { signedXdr: string }): Promise<SubmitSignedResult | SubmitSignedPending> {
-    const parsed = parseSignedTransaction(params.signedXdr, this.networkPassphrase);
-    assertNotExpired(parsed.transaction);
-    
-    // Extract source public key for read-your-writes tracking
-    const sourcePublicKey = parsed.sourcePublicKey;
-    
-    // Mark this user as having a pending transaction (read-your-writes)
-    await markPendingTransaction(sourcePublicKey);
-
-    const startTime = Date.now();
-    let send: StellarSdk.rpc.Api.SendTransactionResponse;
-    try {
-      send = await withSpan(
-        "soroban_rpc.send_transaction",
-        {
-          "rpc.system": "soroban_rpc",
-          "stellar.network": this.networkPassphrase,
-          "stellar.tx_hash": parsed.hash,
-        },
-        () => this.server.sendTransaction(parsed.transaction)
-      );
-    } catch (err) {
-      metrics.submissionsTotal.inc({ status: "failed", route: "contract_submit" });
-      metrics.submissionDurationMs.observe(Date.now() - startTime);
-      // Clear pending flag if send fails
-      await clearPendingTransaction(sourcePublicKey);
-      throw new SorobanUnavailableError();
-    }
-
-    if (send.status === "ERROR") {
-      metrics.submissionsTotal.inc({ status: "failed", route: "contract_submit" });
-      metrics.submissionDurationMs.observe(Date.now() - startTime);
-      await clearPendingTransaction(sourcePublicKey);
-      throw translateSendError(send, parsed.hash);
-    }
-    if (send.status === "TRY_AGAIN_LATER") {
-      metrics.submissionsTotal.inc({ status: "pending", route: "contract_submit" });
-      metrics.submissionDurationMs.observe(Date.now() - startTime);
-      await clearPendingTransaction(sourcePublicKey);
-      throw new SorobanUnavailableError("Soroban RPC is busy. Try again shortly.");
-    }
-
-    // PENDING, or DUPLICATE (already queued by an earlier submit): wait for the outcome.
-    const final = await this.pollTransaction(send.hash);
-    metrics.submissionDurationMs.observe(Date.now() - startTime);
-    
-    // Clear the pending flag after transaction reaches final state
-    await clearPendingTransaction(sourcePublicKey);
-    
-    if (final.status === rpc.Api.GetTransactionStatus.SUCCESS) {
-      metrics.submissionsTotal.inc({ status: "success", route: "contract_submit" });
-      return { hash: send.hash, ledger: final.ledger, successful: true };
-    }
-    if (final.status === rpc.Api.GetTransactionStatus.FAILED) {
-      metrics.submissionsTotal.inc({ status: "failed", route: "contract_submit" });
-      throw new SorobanTransactionError(
-        `Transaction failed on-chain after passing simulation (hash ${send.hash})`,
-        send.hash
-      );
-    }
-    metrics.submissionsTotal.inc({ status: "pending", route: "contract_submit" });
-    return { hash: send.hash, status: "pending" };
-  }
-
-  /**
-   * Builds an unsigned transaction XDR for a contract call.
-   * Assembles simulation footprint and auth when simulation succeeds.
-   */
-  async buildUnsignedTransaction(params: {
-    contractId: string;
-    method: string;
-    args: StellarSdk.xdr.ScVal[];
-    sourcePublicKey: string;
-  }): Promise<string> {
-    const { contractId, method, args, sourcePublicKey } = params;
-    let sourceAccount: StellarSdk.Account;
-    try {
-      sourceAccount = await this.server.getAccount(sourcePublicKey);
-    } catch {
-      sourceAccount = new StellarSdk.Account(sourcePublicKey, "0");
-    }
-    const tx = this.buildInvocation(sourceAccount, contractId, method, args);
-
-    try {
-      const sim = await this.server.simulateTransaction(tx);
-      if (!rpc.Api.isSimulationError(sim)) {
-        const prepared = rpc.assembleTransaction(tx, sim).build();
-        return prepared.toXDR();
-      }
-    } catch {
-      // Fall back to invocation transaction if simulation is not supported
-    }
-
-    return tx.toXDR();
-  }
-
-  /**
-   * Reads `liveUntilLedgerSeq` for each ledger key (#185 TTL keeper). Keys
-   * that have no live entry (never written, or archived) are absent from
-   * the returned map, keyed by the base64 XDR of the LedgerKey.
-   */
-  async getLiveUntil(keys: StellarSdk.xdr.LedgerKey[]): Promise<Map<string, number>> {
-    const out = new Map<string, number>();
-    if (keys.length === 0) return out;
-    const res = await this.server.getLedgerEntries(...keys);
-    for (const entry of res.entries) {
-      if (typeof entry.liveUntilLedgerSeq === "number") {
-        out.set(entry.key.toXDR("base64"), entry.liveUntilLedgerSeq);
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Returns the latest ledger sequence from Soroban RPC.
-   */
-  async getLatestLedger(): Promise<number> {
-    const latest = await this.server.getLatestLedger();
-    return latest.sequence;
-  }
-}
-
-/** Result codes that mean the signed transaction is stale and the client must rebuild it. */
-const REBUILD_RESULT_CODES = ["txSorobanInvalid", "txBadSeq", "txInsufficientFee"];
-
-function translateSendError(send: StellarSdk.rpc.Api.SendTransactionResponse, hash: string): Error {
-  const resultCode = send.errorResult?.result().switch().name ?? "unknown";
-  if (resultCode === "txTooLate") {
-    return new TransactionExpiredError("The transaction expired before it reached the network. Build a new one and sign it again.");
-  }
-  if (REBUILD_RESULT_CODES.includes(resultCode)) {
-    return new SorobanRebuildRequiredError(
-      `The prepared transaction is no longer valid (${resultCode}). Build it again and sign the new one.`,
-      resultCode
-    );
-  }
-  return new SorobanSimulationError(
-    `Transaction ${hash} was rejected before entering the ledger (${resultCode})`,
-    send.errorResult ? send.errorResult.toXDR("base64") : resultCode
-  );
 }

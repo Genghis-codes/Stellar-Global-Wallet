@@ -9,6 +9,13 @@
  * The chain covers ALL security-relevant events (keypair issuance, login,
  * logout, key rotation, fee-bump sponsorships, failed auth attempts) so the
  * log is useful beyond the original keypair-only scope.
+ *
+ * Data retention (#261): audit rows are personal data (actor = JWT subject).
+ * `purgeExpiredAuditLog` anonymises rows older than the retention window by
+ * replacing the actor with a non-identifying sentinel and clearing metadata,
+ * while preserving the hash chain (the row_hash is recomputed and the chain
+ * re-linked so `verifyAuditChain` still passes). `deleteAuditLogForActor`
+ * removes all rows for a single actor for the user data-deletion endpoint.
  */
 
 import { createHash } from "crypto";
@@ -55,6 +62,9 @@ export async function ensureAuditLogTable(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 const GENESIS_HASH = "0".repeat(64);
+
+/** Sentinel actor used when an audit row is anonymised by retention. */
+export const ANONYMISED_ACTOR = "anonymised";
 
 /** Retrieve the row_hash of the most recent audit_log entry. */
 async function lastRowHash(): Promise<string> {
@@ -153,6 +163,78 @@ export async function verifyAuditChain(): Promise<{ valid: boolean; brokenAtId?:
     expectedPrev = row.row_hash;
   }
   return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
+// Retention & deletion (#261)
+// ---------------------------------------------------------------------------
+
+/**
+ * Anonymise audit rows older than `retentionDays`.
+ *
+ * Personal identifiers (actor, subject, metadata) are replaced with
+ * non-identifying values. The hash chain is preserved by recomputing each
+ * affected row's `row_hash` and re-linking subsequent `prev_hash` values so
+ * `verifyAuditChain` continues to pass. Returns the number of rows anonymised.
+ */
+export async function purgeExpiredAuditLog(retentionDays: number): Promise<number> {
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
+    throw new Error("retentionDays must be a positive number");
+  }
+
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const { rows } = await pool.query<{
+    id: number;
+    created_at: Date;
+    event_type: string;
+    actor: string;
+    subject: string;
+    metadata: string;
+    prev_hash: string;
+    row_hash: string;
+  }>(`SELECT * FROM audit_log ORDER BY id ASC`);
+
+  let expectedPrev = GENESIS_HASH;
+  let anonymised = 0;
+
+  for (const row of rows) {
+    const createdAt = new Date(row.created_at).toISOString();
+    const expired = createdAt < cutoff;
+    const actor = expired ? ANONYMISED_ACTOR : row.actor;
+    const subject = expired ? "" : row.subject;
+    const metadata = expired ? "{}" : row.metadata;
+    const rowHash = computeRowHash(expectedPrev, row.event_type, actor, subject, metadata, createdAt);
+
+    if (expired && (row.actor !== actor || row.subject !== subject || row.metadata !== metadata)) {
+      await pool.query(
+        `UPDATE audit_log
+           SET actor = $1, subject = $2, metadata = $3, prev_hash = $4, row_hash = $5
+         WHERE id = $6`,
+        [actor, subject, metadata, expectedPrev, rowHash, row.id]
+      );
+      anonymised += 1;
+    } else if (row.prev_hash !== expectedPrev || row.row_hash !== rowHash) {
+      // Re-link rows whose predecessor was rewritten by this pass.
+      await pool.query(
+        `UPDATE audit_log SET prev_hash = $1, row_hash = $2 WHERE id = $3`,
+        [expectedPrev, rowHash, row.id]
+      );
+    }
+
+    expectedPrev = rowHash;
+  }
+
+  return anonymised;
+}
+
+/**
+ * Remove every audit row belonging to a single actor. Used by the user
+ * data-deletion endpoint. Returns the number of rows removed.
+ */
+export async function deleteAuditLogForActor(actor: string): Promise<number> {
+  const { rowCount } = await pool.query(`DELETE FROM audit_log WHERE actor = $1`, [actor]);
+  return rowCount ?? 0;
 }
 
 // ---------------------------------------------------------------------------

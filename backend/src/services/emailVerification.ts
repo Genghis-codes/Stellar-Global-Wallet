@@ -39,7 +39,7 @@ const BASE_URL = process.env.BASE_URL ?? "https://app.globewallet.app";
 
 // ── Table bootstrap ────────────────────────────────────────────────────────
 
-export async function ensureVerifiedEmailsTable(db: Pool = pool): Promise<void> {
+export async function ensureVerifiedEmailsTable(db: Queryable = pool): Promise<void> {
   await db.query(`
     CREATE TABLE IF NOT EXISTS verified_emails (
       id               BIGSERIAL     PRIMARY KEY,
@@ -99,7 +99,7 @@ export async function sendVerificationEmail(
   account: string,
   rawEmail: string,
   locale = "en",
-  db: Pool = pool
+  db: Queryable = pool
 ): Promise<void> {
   const email = normaliseEmail(rawEmail);
   const token = crypto.randomBytes(32).toString("hex");
@@ -198,7 +198,7 @@ export async function verifyToken(
  */
 export async function getVerifiedEmail(
   account: string,
-  db: Pool = pool
+  db: Queryable = pool
 ): Promise<string | null> {
   const { rows } = await db.query<{ email: string; verified: boolean }>(
     `SELECT email, verified FROM verified_emails WHERE account = $1`,

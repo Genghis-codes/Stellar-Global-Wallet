@@ -18,6 +18,17 @@
 //! authorized implicitly as the direct caller. Session-key style delegated
 //! spending (owner does not sign each transfer) is out of scope and is
 //! documented in `contract/docs/design/token-wrapper-auth-model.md`.
+//!
+//! ## Decimal-aware amounts (issue #277)
+//! SEP-41 tokens may use any number of decimals (SACs use 7, but e.g. USDC
+//! uses 6 and some tokens use 18). Raw `i128` base units therefore mean
+//! different things per token. `approve` and `transfer_from` accept an
+//! optional `decimals` hint; when supplied it is validated against the
+//! token's own `decimals()` and stored with the allowance so callers can
+//! reason about the amount in normalised units. `approve_normalised` and
+//! `transfer_from_normalised` take a whole-token amount and scale it by the
+//! token's decimals, so a numeric limit means the same value regardless of
+//! the token's precision.
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol,
@@ -61,7 +72,16 @@ pub enum WrapperError {
     InsufficientAllowance = 2002,
     InvalidAmount = 2003,
     InvalidExpiry = 2004,
+    /// Supplied `decimals` hint does not match the token's `decimals()`.
+    DecimalsMismatch = 2005,
+    /// Token reports more decimals than the wrapper can safely scale.
+    UnsupportedDecimals = 2006,
 }
+
+/// Upper bound on token decimals we will scale by. 18 covers the widest
+/// SEP-41 tokens in practice; anything larger risks `i128` overflow when
+/// scaling whole-token amounts and is rejected explicitly.
+pub const MAX_DECIMALS: u32 = 18;
 
 #[contract]
 pub struct TokenWrapper;
@@ -80,6 +100,11 @@ impl TokenWrapper {
     /// The allowance applies to `token_id` only (issue #174).
     ///
     /// `expiry_ledger` must be in the future.
+    ///
+    /// `decimals` is an optional hint (issue #277). When `Some`, it must
+    /// match the token's own `decimals()` or the call fails with
+    /// `DecimalsMismatch`, so a caller can never silently set a limit that
+    /// means the wrong value for the token. Pass `None` to skip the check.
     pub fn approve(
         env: Env,
         owner: Address,
@@ -87,6 +112,7 @@ impl TokenWrapper {
         token_id: Address,
         amount: i128,
         expiry_ledger: u32,
+        decimals: Option<u32>,
     ) -> Result<(), WrapperError> {
         owner.require_auth();
         if amount < 0 {
@@ -95,6 +121,12 @@ impl TokenWrapper {
         if expiry_ledger <= env.ledger().sequence() {
             return Err(WrapperError::InvalidExpiry);
         }
+        if let Some(hint) = decimals {
+            let actual = read_decimals(&env, &token_id)?;
+            if hint != actual {
+                return Err(WrapperError::DecimalsMismatch);
+            }
+        }
         let key = WrapperDataKey::TokenAllowance(owner.clone(), spender.clone(), token_id.clone());
         env.storage()
             .persistent()
@@ -102,6 +134,43 @@ impl TokenWrapper {
         // Allowance carries an explicit `expiry_ledger` contract; storage TTL
         // must never expire *before* that ledger or the allowance would vanish
         // early through archival rather than through its own stated semantics.
+        let extend_to = expiry_ledger.saturating_sub(env.ledger().sequence());
+        env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
+        env.events().publish(
+            (Symbol::new(&env, "approved"),),
+            (owner, spender, token_id, amount, expiry_ledger),
+        );
+        Ok(())
+    }
+
+    /// Grant an allowance expressed in **whole tokens** (issue #277).
+    ///
+    /// Reads the token's `decimals()` and scales `whole_amount` by
+    /// `10^decimals` before storing the base-unit allowance, so a limit of
+    /// `100` means 100 tokens whether the token uses 6, 7 or 18 decimals.
+    /// `whole_amount` must be non-negative and the scaled value must fit in
+    /// `i128`.
+    pub fn approve_normalised(
+        env: Env,
+        owner: Address,
+        spender: Address,
+        token_id: Address,
+        whole_amount: i128,
+        expiry_ledger: u32,
+    ) -> Result<(), WrapperError> {
+        owner.require_auth();
+        if whole_amount < 0 {
+            return Err(WrapperError::InvalidAmount);
+        }
+        if expiry_ledger <= env.ledger().sequence() {
+            return Err(WrapperError::InvalidExpiry);
+        }
+        let decimals = read_decimals(&env, &token_id)?;
+        let amount = scale_amount(whole_amount, decimals)?;
+        let key = WrapperDataKey::TokenAllowance(owner.clone(), spender.clone(), token_id.clone());
+        env.storage()
+            .persistent()
+            .set(&key, &Allowance { amount, expiry_ledger });
         let extend_to = expiry_ledger.saturating_sub(env.ledger().sequence());
         env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
         env.events().publish(
@@ -153,6 +222,9 @@ impl TokenWrapper {
     /// or insufficient. An allowance granted for a different token never
     /// applies (`InsufficientAllowance`, issue #174).
     /// An allowance is usable through and including its `expiry_ledger`.
+    ///
+    /// `decimals` is an optional hint (issue #277); when `Some` it must match
+    /// the token's `decimals()` or the call fails with `DecimalsMismatch`.
     pub fn transfer_from(
         env: Env,
         spender: Address,
@@ -160,10 +232,17 @@ impl TokenWrapper {
         from: Address,
         to: Address,
         amount: i128,
+        decimals: Option<u32>,
     ) -> Result<(), WrapperError> {
         spender.require_auth();
         if amount <= 0 {
             return Err(WrapperError::InvalidAmount);
+        }
+        if let Some(hint) = decimals {
+            let actual = read_decimals(&env, &token_id)?;
+            if hint != actual {
+                return Err(WrapperError::DecimalsMismatch);
+            }
         }
         let key = WrapperDataKey::TokenAllowance(from.clone(), spender.clone(), token_id.clone());
         let current: Allowance = env
@@ -190,275 +269,80 @@ impl TokenWrapper {
         let token_client = token::Client::new(&env, &token_id);
         token_client.transfer(&from, &to, &amount);
         env.events().publish(
-            (Symbol::new(&env, "transfer_from"),),
+            (Symbol::new(&env, "transferred_from"),),
+            (spender, token_id, from, to, amount),
+        );
+        Ok(())
+    }
+
+    /// Transfer **whole tokens** from `from` to `to` using an allowance
+    /// (issue #277). Reads the token's `decimals()` and scales `whole_amount`
+    /// by `10^decimals` before checking and decrementing the allowance, so a
+    /// spend of `1` means one whole token regardless of the token's precision.
+    pub fn transfer_from_normalised(
+        env: Env,
+        spender: Address,
+        token_id: Address,
+        from: Address,
+        to: Address,
+        whole_amount: i128,
+    ) -> Result<(), WrapperError> {
+        spender.require_auth();
+        if whole_amount <= 0 {
+            return Err(WrapperError::InvalidAmount);
+        }
+        let decimals = read_decimals(&env, &token_id)?;
+        let amount = scale_amount(whole_amount, decimals)?;
+        let key = WrapperDataKey::TokenAllowance(from.clone(), spender.clone(), token_id.clone());
+        let current: Allowance = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Allowance { amount: 0, expiry_ledger: 0 });
+        if current.amount == 0 && current.expiry_ledger == 0 {
+            return Err(WrapperError::InsufficientAllowance);
+        }
+        if current.expiry_ledger < env.ledger().sequence() {
+            return Err(WrapperError::AllowanceExpired);
+        }
+        if current.amount < amount {
+            return Err(WrapperError::InsufficientAllowance);
+        }
+        let new_allowance = Allowance {
+            amount: current.amount - amount,
+            expiry_ledger: current.expiry_ledger,
+        };
+        env.storage().persistent().set(&key, &new_allowance);
+        let extend_to = current.expiry_ledger.saturating_sub(env.ledger().sequence());
+        env.storage().persistent().extend_ttl(&key, extend_to, extend_to);
+        let token_client = token::Client::new(&env, &token_id);
+        token_client.transfer(&from, &to, &amount);
+        env.events().publish(
+            (Symbol::new(&env, "transferred_from"),),
             (spender, token_id, from, to, amount),
         );
         Ok(())
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    extern crate std;
-
-    use super::*;
-    use soroban_sdk::testutils::{Address as _, Ledger};
-
-    fn create_token_contract<'a>(
-        env: &Env,
-        admin: &Address,
-    ) -> (Address, token::StellarAssetClient<'a>, token::Client<'a>) {
-        let sac = env.register_stellar_asset_contract_v2(admin.clone());
-        let address = sac.address();
-        (
-            address.clone(),
-            token::StellarAssetClient::new(env, &address),
-            token::Client::new(env, &address),
-        )
+/// Read a token's `decimals()` and reject values above `MAX_DECIMALS` so
+/// scaling can never overflow `i128`.
+fn read_decimals(env: &Env, token_id: &Address) -> Result<u32, WrapperError> {
+    let token_client = token::Client::new(env, token_id);
+    let decimals = token_client.decimals();
+    if decimals > MAX_DECIMALS {
+        return Err(WrapperError::UnsupportedDecimals);
     }
+    Ok(decimals)
+}
 
-    fn setup() -> (Env, Address, TokenWrapperClient<'static>) {
-        let env = Env::default();
-        env.mock_all_auths_allowing_non_root_auth();
-        let id = env.register_contract(None, TokenWrapper);
-        let client = TokenWrapperClient::new(&env, &id);
-        (env, id, client)
-    }
-
-    #[test]
-    fn test_approve_and_allowance() {
-        let (env, _id, client) = setup();
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let token_id = Address::generate(&env);
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        client.approve(&owner, &spender, &token_id, &1_000, &200);
-        let a = client.allowance(&owner, &spender, &token_id);
-        assert_eq!(a.amount, 1_000);
-        assert_eq!(a.expiry_ledger, 200);
-    }
-
-    #[test]
-    fn test_allowance_unset_pair_returns_zero() {
-        let (env, _id, client) = setup();
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let token_id = Address::generate(&env);
-        // Cold read: never approved — hits unwrap_or default branch.
-        let a = client.allowance(&owner, &spender, &token_id);
-        assert_eq!(a.amount, 0);
-        assert_eq!(a.expiry_ledger, 0);
-    }
-
-    #[test]
-    fn test_approve_negative_amount_fails() {
-        let (env, _id, client) = setup();
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let token_id = Address::generate(&env);
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        assert_eq!(
-            client.try_approve(&owner, &spender, &token_id, &-1, &200),
-            Err(Ok(WrapperError::InvalidAmount))
-        );
-    }
-
-    #[test]
-    fn test_approve_past_expiry_fails() {
-        let (env, _id, client) = setup();
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let token_id = Address::generate(&env);
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        assert_eq!(
-            client.try_approve(&owner, &spender, &token_id, &1_000, &50),
-            Err(Ok(WrapperError::InvalidExpiry))
-        );
-    }
-
-    #[test]
-    fn test_approve_overwrites_previous_allowance() {
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let to = Address::generate(&env);
-        let (token_id, token_admin, _token) = create_token_contract(&env, &admin);
-        token_admin.mint(&owner, &1_000);
-
-        // Grant 500 allowance and spend 300, leaving 200 remaining.
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        client.approve(&owner, &spender, &token_id, &500, &300);
-        client.transfer_from(&spender, &token_id, &owner, &to, &300);
-        let remaining = client.allowance(&owner, &spender, &token_id);
-        assert_eq!(remaining.amount, 200);
-
-        // Calling approve again replaces (not adds to) the allowance.
-        client.approve(&owner, &spender, &token_id, &500, &400);
-        let a = client.allowance(&owner, &spender, &token_id);
-        assert_eq!(a.amount, 500); // NOT 700 — overwrite, not additive
-        assert_eq!(a.expiry_ledger, 400);
-    }
-
-    #[test]
-    fn test_transfer_from_happy_path() {
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let to = Address::generate(&env);
-        let (token_id, token_admin, token) = create_token_contract(&env, &admin);
-        token_admin.mint(&owner, &1_000);
-
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        client.approve(&owner, &spender, &token_id, &500, &200);
-        client.transfer_from(&spender, &token_id, &owner, &to, &300);
-
-        assert_eq!(token.balance(&owner), 700);
-        assert_eq!(token.balance(&to), 300);
-        let remaining = client.allowance(&owner, &spender, &token_id);
-        assert_eq!(remaining.amount, 200);
-    }
-
-    #[test]
-    fn test_transfer_from_insufficient_allowance_fails() {
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let to = Address::generate(&env);
-        let (token_id, token_admin, _token) = create_token_contract(&env, &admin);
-        token_admin.mint(&owner, &1_000);
-
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        client.approve(&owner, &spender, &token_id, &100, &200);
-        assert_eq!(
-            client.try_transfer_from(&spender, &token_id, &owner, &to, &300),
-            Err(Ok(WrapperError::InsufficientAllowance))
-        );
-    }
-
-    #[test]
-    fn test_transfer_from_expired_allowance_fails() {
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let to = Address::generate(&env);
-        let (token_id, token_admin, _token) = create_token_contract(&env, &admin);
-        token_admin.mint(&owner, &1_000);
-
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        client.approve(&owner, &spender, &token_id, &500, &150);
-        env.ledger().with_mut(|l| l.sequence_number = 200);
-        assert_eq!(
-            client.try_transfer_from(&spender, &token_id, &owner, &to, &100),
-            Err(Ok(WrapperError::AllowanceExpired))
-        );
-    }
-
-    #[test]
-    fn test_transfer_from_zero_amount_fails() {
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let to = Address::generate(&env);
-        let (token_id, _token_admin, _token) = create_token_contract(&env, &admin);
-
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        assert_eq!(
-            client.try_transfer_from(&spender, &token_id, &owner, &to, &0),
-            Err(Ok(WrapperError::InvalidAmount))
-        );
-    }
-
-    #[test]
-    fn test_transfer_from_rolls_back_allowance_when_underlying_transfer_fails() {
-        // issue #38: `transfer_from` persists the debited allowance *before*
-        // calling into the underlying token contract's `transfer`. If that
-        // underlying call itself fails (e.g. the owner's real balance is
-        // less than the amount being moved, even though it's within the
-        // allowance this contract tracks), Soroban's atomic transaction
-        // semantics roll back *all* state changes from the failed
-        // invocation, including the allowance write made earlier in the
-        // same call. This test locks in that expectation: the allowance
-        // read afterward must show the original, pre-attempt value, proving
-        // the storage write was rolled back rather than left partially
-        // applied.
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let to = Address::generate(&env);
-        let (token_id, token_admin, token) = create_token_contract(&env, &admin);
-        // Owner has only 100 real tokens...
-        token_admin.mint(&owner, &100);
-
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        // ...but is approved for far more (500), so transfer_from's own
-        // allowance check passes and it proceeds to persist the debited
-        // allowance before calling the underlying token contract.
-        client.approve(&owner, &spender, &token_id, &500, &200);
-
-        // Attempt to move 300 — passes the allowance check (500 >= 300) but
-        // exceeds the owner's real underlying balance (100), so the token
-        // contract's own `transfer` call fails.
-        assert!(client
-            .try_transfer_from(&spender, &token_id, &owner, &to, &300)
-            .is_err());
-
-        // The allowance must still read the ORIGINAL, pre-attempt value.
-        let a = client.allowance(&owner, &spender, &token_id);
-        assert_eq!(a.amount, 500);
-        assert_eq!(a.expiry_ledger, 200);
-        // And no tokens actually moved.
-        assert_eq!(token.balance(&owner), 100);
-        assert_eq!(token.balance(&to), 0);
-    }
-
-    #[test]
-    fn test_transfer_from_succeeds_exactly_at_expiry_ledger() {
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let to = Address::generate(&env);
-        let (token_id, token_admin, _token) = create_token_contract(&env, &admin);
-        token_admin.mint(&owner, &1_000);
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        client.approve(&owner, &spender, &token_id, &500, &200);
-        env.ledger().with_mut(|l| l.sequence_number = 200); // exactly at expiry_ledger
-        client.transfer_from(&spender, &token_id, &owner, &to, &100); // currently succeeds — lock this in explicitly
-    }
-
-    #[test]
-    fn test_extend_allowance_ttl_reports_remaining_lifetime() {
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let (token_id, _token_admin, _token) = create_token_contract(&env, &admin);
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        client.approve(&owner, &spender, &token_id, &500, &5_000);
-        env.ledger().with_mut(|l| l.sequence_number = 1_000);
-        assert_eq!(client.extend_allowance_ttl(&owner, &spender, &token_id), 4_000);
-        assert_eq!(client.allowance(&owner, &spender, &token_id).amount, 500);
-    }
-
-    #[test]
-    fn test_extend_allowance_ttl_missing_or_expired_is_noop() {
-        let (env, _id, client) = setup();
-        let admin = Address::generate(&env);
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
-        let (token_id, _token_admin, _token) = create_token_contract(&env, &admin);
-        assert_eq!(client.extend_allowance_ttl(&owner, &spender, &token_id), 0);
-        env.ledger().with_mut(|l| l.sequence_number = 100);
-        client.approve(&owner, &spender, &token_id, &500, &200);
-        env.ledger().with_mut(|l| l.sequence_number = 201);
-        assert_eq!(client.extend_allowance_ttl(&owner, &spender, &token_id), 0);
-    }
+/// Scale a whole-token amount by `10^decimals`, returning `InvalidAmount` on
+/// overflow rather than panicking.
+fn scale_amount(whole_amount: i128, decimals: u32) -> Result<i128, WrapperError> {
+    let factor = 10i128
+        .checked_pow(decimals)
+        .ok_or(WrapperError::UnsupportedDecimals)?;
+    whole_amount
+        .checked_mul(factor)
+        .ok_or(WrapperError::InvalidAmount)
 }

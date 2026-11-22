@@ -13,6 +13,11 @@ members = [
 # release/wasm32 build, which cannot compile it, breaking every deploy build.
 # Pin to 21.7.7 is currently unreviewed drift. Not yet evaluated for upgrade to 27.x.
 # Requires careful migration testing due to protocol coupling and security-relevant fixes.
+#
+# Issue #286: the weekly `next-protocol` CI job (.github/workflows/next-protocol.yml)
+# overrides this pin with the next soroban-sdk release to surface protocol
+# breakage early. Keep the version string on its own line so the job's
+# `sed` override stays a one-line, reviewable change.
 soroban-sdk = { version = "21.7.7" }
 
 # `soroban-env-host` 21.2.1 — a transitive dependency of `soroban-sdk`

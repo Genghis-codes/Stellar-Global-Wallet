@@ -110,3 +110,11 @@ flowchart LR
 ## ⚠️ Status
 
 This project is in **active development on Stellar testnet**. It has not been audited, so do not use it with real funds.
+
+## Handsoff notes
+
+<!-- handsoff-issue-269 -->
+- #269: USD-denominated aggregate spend limits across all assets
+
+<!-- handsoff-issue-270 -->
+- #270: New-destination cooldown and trusted address book enforced on-chain

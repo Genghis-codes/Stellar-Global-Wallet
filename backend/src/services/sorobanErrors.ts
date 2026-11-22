@@ -1,5 +1,10 @@
 import { AppError, ErrorCode } from "../errors/appError";
 
+export {
+  UpstreamResponseTooLargeError,
+  UpstreamValidationError,
+} from "./upstreamValidation";
+
 export class SorobanNotConfiguredError extends AppError {
   constructor(message = "Soroban contract integration is not configured (missing contract ID)") {
     super(message, {
