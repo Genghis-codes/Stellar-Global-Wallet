@@ -164,3 +164,115 @@ export async function ensureSessionsTable(db: Pool) {
       ON sessions (refresh_hash)
   `);
 }
+
+/**
+ * #261 — data retention and privacy.
+ *
+ * Data inventory (personal data stored by the backend):
+ *   - verified_emails   : email address per account (email notification fallback)
+ *   - devices           : push device tokens per account
+ *   - preferences       : per-account user preferences
+ *   - sessions          : refresh-token hashes, user agent, hashed IP
+ *   - keypair_audit_log : api key hash + public key per key issuance
+ *   - activity_feed     : per-account activity events
+ *
+ * Retention policy (defaults, overridable via env):
+ *   - audit log entries older than AUDIT_LOG_RETENTION_DAYS are purged
+ *   - revoked sessions older than SESSION_RETENTION_DAYS are purged
+ *   - devices not seen within DEVICE_RETENTION_DAYS are purged
+ *
+ * Deletion removes every row keyed by the account across all of the above
+ * tables so a user can exercise their right to erasure.
+ */
+const AUDIT_LOG_RETENTION_DAYS = Number(process.env.AUDIT_LOG_RETENTION_DAYS ?? 90);
+const SESSION_RETENTION_DAYS = Number(process.env.SESSION_RETENTION_DAYS ?? 30);
+const DEVICE_RETENTION_DAYS = Number(process.env.DEVICE_RETENTION_DAYS ?? 180);
+
+/** Tables that hold personal data keyed by an account column. */
+const ACCOUNT_SCOPED_TABLES: ReadonlyArray<{ table: string; column: string }> = [
+  { table: "verified_emails", column: "account" },
+  { table: "devices", column: "account" },
+  { table: "preferences", column: "account" },
+  { table: "sessions", column: "account" },
+  { table: "activity_feed", column: "account" },
+];
+
+/**
+ * Purge personal data that has exceeded its retention window.
+ * Returns the number of rows removed per table for observability.
+ */
+export async function runRetentionJobs(db: Pool = pool): Promise<Record<string, number>> {
+  const removed: Record<string, number> = {};
+
+  const audit = await db.query(
+    `DELETE FROM keypair_audit_log
+       WHERE issued_at < NOW() - ($1 || ' days')::interval`,
+    [AUDIT_LOG_RETENTION_DAYS],
+  );
+  removed.keypair_audit_log = audit.rowCount ?? 0;
+
+  const sessions = await db.query(
+    `DELETE FROM sessions
+       WHERE revoked_at IS NOT NULL
+         AND revoked_at < NOW() - ($1 || ' days')::interval`,
+    [SESSION_RETENTION_DAYS],
+  );
+  removed.sessions = sessions.rowCount ?? 0;
+
+  const devices = await db.query(
+    `DELETE FROM devices
+       WHERE last_seen_at < NOW() - ($1 || ' days')::interval`,
+    [DEVICE_RETENTION_DAYS],
+  );
+  removed.devices = devices.rowCount ?? 0;
+
+  return removed;
+}
+
+/**
+ * Export every stored personal-data row for an account so the user can
+ * retrieve a copy of their data (GDPR/CCPA access request).
+ */
+export async function exportUserData(
+  account: string,
+  db: Pool = pool,
+): Promise<Record<string, unknown[]>> {
+  const result: Record<string, unknown[]> = {};
+  for (const { table, column } of ACCOUNT_SCOPED_TABLES) {
+    const rows = await db.query(
+      `SELECT * FROM ${table} WHERE ${column} = $1`,
+      [account],
+    );
+    result[table] = rows.rows;
+  }
+  return result;
+}
+
+/**
+ * Delete every stored personal-data row for an account (right to erasure).
+ * Runs in a single transaction so a partial failure leaves no orphaned data.
+ */
+export async function deleteUserData(
+  account: string,
+  db: Pool = pool,
+): Promise<Record<string, number>> {
+  const client = await db.connect();
+  const removed: Record<string, number> = {};
+  try {
+    await client.query("BEGIN");
+    for (const { table, column } of ACCOUNT_SCOPED_TABLES) {
+      const res = await client.query(
+        `DELETE FROM ${table} WHERE ${column} = $1`,
+        [account],
+      );
+      removed[table] = res.rowCount ?? 0;
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  return removed;
+}
