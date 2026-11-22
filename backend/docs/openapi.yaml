@@ -235,6 +235,16 @@ components:
         type: string
         pattern: '^[A-Za-z0-9-]{8,64}$'
         example: "3f1c9a2e-7b4d-4c8a-9e6f-1a2b3c4d5e6f"
+  responses:
+    Error:
+      description: Shared error envelope
+      headers:
+        X-Request-Id:
+          $ref: "#/components/headers/X-Request-Id"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   schemas:
     ErrorResponse:
       $ref: "./openapi-errors.yaml#/components/schemas/ErrorResponse"
