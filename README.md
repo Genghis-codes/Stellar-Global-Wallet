@@ -115,3 +115,6 @@ This project is in **active development on Stellar testnet**. It has not been au
 
 <!-- handsoff-issue-264 -->
 - #264: Asset codes compared case-insensitively for tracking but case-sensitively for spend limits
+
+<!-- handsoff-issue-267 -->
+- #267: Clean up the contract's deprecated API surface (`propose_upgrade` deprecation note is wrong)
