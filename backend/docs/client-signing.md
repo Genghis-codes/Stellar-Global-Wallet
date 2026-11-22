@@ -9,6 +9,19 @@ secret key to the backend.
 Horizon/Soroban URLs, contract IDs, feature availability, and API/client
 versions. It does not expose server secrets.
 
+## Native SDKs (Kotlin and Swift)
+
+Besides the TypeScript SDK in `packages/sdk`, native clients are generated from
+`backend/openapi.yaml` with openapi-generator:
+
+- Kotlin: `packages/sdk-kotlin` (generated client + hand-written auth/signing layer)
+- Swift: `packages/sdk-swift` (generated client + hand-written auth/signing layer)
+
+The generated clients cover transport, models, and error envelopes. The
+hand-written layers add bearer-token auth and the signing flow below, mirroring
+`packages/sdk`. All three SDKs run the same JSON conformance cases in
+`packages/sdk-conformance/cases` so behaviour stays aligned.
+
 ## Build and sign a trustline change
 
 `POST /api/v1/wallet/trustline/build` requires authentication and accepts an
