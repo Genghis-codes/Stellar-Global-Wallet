@@ -28,3 +28,16 @@ proptest = "1"
 
 [features]
 testutils = ["soroban-sdk/testutils"]
+
+# WASM size optimisations (issue #281). `opt-level = "z"` + fat LTO + a single
+# codegen unit minimise the deployed .wasm, which directly reduces deploy and
+# upgrade fees. `panic = "abort"` and `strip = true` drop unwinding tables and
+# debug symbols that are never needed on-chain. These settings only affect the
+# release profile used for the wasm32 target; `cargo test` (dev profile) is
+# unaffected, so the contract spec snapshot stays identical.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
