@@ -45,6 +45,7 @@
 
 import { createClient } from "redis";
 import { config } from "../config";
+import { withServiceRole } from "../db";
 import { getDevicesForAccounts } from "./deviceRegistry";
 import { sendPushToAll } from "./pushSender";
 import { tNotification } from "./i18nHelper";
@@ -341,7 +342,10 @@ async function processEvent(event: SorobanEvent): Promise<void> {
   if (!isRecoveryInitiated && !isRecoveryApproved && !isGuardianEvent) return;
 
   // Owner notification — ALWAYS sent, cannot be disabled (#89 requirement).
-  const ownerDevices = await getDevicesForAccounts([ownerAddress]);
+  const ownerDevices = await withServiceRole(
+    (tx) => getDevicesForAccounts([ownerAddress], tx),
+    { jobName: "recoveryNotifier.ownerAlert" }
+  );
   if (ownerDevices.length > 0) {
     const locale = ownerDevices[0]?.locale ?? "en";
     const titleKey = `${topic0}.${topic1}.title` as const;
@@ -371,8 +375,25 @@ async function processEvent(event: SorobanEvent): Promise<void> {
     }
   }
 
-  // Bust the contract cache so subsequent reads reflect the new on-chain state.
-  await bustContractCache();
+  // Exclude the owner from the guardian list (should not happen but be safe).
+  const otherGuardians = guardianAddresses.filter((g) => g !== ownerAddress);
+  if (otherGuardians.length === 0) return;
+
+  const devices = await withServiceRole(
+    (tx) => getDevicesForAccounts(otherGuardians, tx),
+    { jobName: "recoveryNotifier.guardianAlert" }
+  );
+  if (devices.length === 0) return;
+
+  const locale = devices[0]?.locale ?? "en";
+  await sendPushToAll(devices, {
+    title: tNotification("guardian.approval_needed.title", locale),
+    body: tNotification("guardian.approval_needed.body", locale),
+    data: { eventId: event.id, contractId: event.contractId, ownerAddress },
+  });
+  console.log(
+    `[recovery-notifier] guardian approval request sent to ${devices.length} device(s)`
+  );
 }
 
 function extractTopicString(topic: SorobanEventValue | undefined): string | null {

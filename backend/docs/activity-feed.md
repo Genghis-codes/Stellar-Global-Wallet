@@ -140,3 +140,41 @@ cover:
 Existing clients using `GET /api/v1/wallet/:publicKey/history` should migrate
 to `GET /api/v1/account/:publicKey/activity` to get Soroban contract events
 included in the feed.
+
+## Incoming-payment watching (#273)
+
+Incoming-payment notifications no longer open one Horizon stream per watched
+account. Instead a single ingestion loop reads each ledger once and fans out
+matches to the notifier and SSE subscribers.
+
+### Ledger-level ingestion
+
+The watcher polls Horizon's global `/payments` stream (or RPC `getLedgers`)
+from a persisted cursor, processing every ledger exactly once regardless of how
+many accounts are watched. This keeps Horizon request volume flat as the user
+base grows instead of scaling linearly with the number of accounts.
+
+### Watched-account matching
+
+Ingested payments are matched against the set of watched accounts using a bloom
+filter for the fast negative path, backed by the database for authoritative
+lookups. Accounts that are not watched are rejected by the filter without a DB
+round-trip; filter hits are confirmed against the DB before fanout.
+
+### Fanout
+
+Matched payments are published to Redis channels consumed by the notifier and
+SSE layers, so a single ingestion process can serve many API instances. Each
+consumer only receives payments for accounts it is responsible for.
+
+### Cursor persistence and catch-up
+
+The ingestion cursor is persisted so that after a restart or downtime the
+watcher resumes from the last processed ledger and catches up on any ledgers it
+missed, rather than dropping notifications.
+
+### Load testing
+
+The watcher is load tested with 100k watched accounts to confirm notifications
+are delivered within the latency budget while Horizon request volume stays
+constant.

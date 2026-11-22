@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { Keypair, StrKey, WebAuth } from "@stellar/stellar-sdk";
+import { Keypair, StrKey, WebAuth, Transaction } from "@stellar/stellar-sdk";
 import { body, query } from "express-validator";
 import { rateLimit } from "express-rate-limit";
 import { AppError, UnauthorizedError } from "../errors/appError";
@@ -112,13 +112,18 @@ authRouter.post(
       assertValidRequest(req);
       const serverKeypair = getServerKeypair();
       const transaction = String(req.body.transaction);
-      const { clientAccountID } = WebAuth.readChallengeTx(
+      const { clientAccountID, clientDomainAccountID } = WebAuth.readChallengeTx(
         transaction,
         serverKeypair.publicKey(),
         networkPassphrase,
         config.HOME_DOMAIN,
         config.WEB_AUTH_DOMAIN
       );
+
+      // SEP-10 requires the challenge to contain exactly one manage_data
+      // operation (the nonce). Anything else is a malformed or malicious
+      // challenge and must be rejected before we look at signatures.
+      assertOnlyNonceOperation(transaction);
 
       // Verify the challenge is signed by the client account. For unfunded
       // accounts the master key is the only signer; funded accounts may be
@@ -135,6 +140,8 @@ authRouter.post(
           config.WEB_AUTH_DOMAIN
         );
       } else {
+        // Unfunded account: the master key is the only valid signer and its
+        // weight (1) must meet the default medium threshold (1).
         WebAuth.verifyChallengeTxSigners(
           transaction,
           serverKeypair.publicKey(),
@@ -143,6 +150,12 @@ authRouter.post(
           config.HOME_DOMAIN,
           config.WEB_AUTH_DOMAIN
         );
+      }
+
+      // If the challenge carries a client_domain, the client_domain signer
+      // must be the SIGNING_KEY published in that domain's stellar.toml.
+      if (clientDomainAccountID) {
+        await verifyClientDomain(transaction, clientDomainAccountID);
       }
 
       const sub = clientAccountID;
@@ -197,6 +210,75 @@ async function loadAccountSigners(account: string): Promise<AccountSigners | nul
     threshold: data.thresholds?.med_threshold ?? 0,
     signers: data.signers ?? [],
   };
+}
+
+// Reject challenges that contain anything other than the single nonce
+// manage_data operation SEP-10 mandates.
+function assertOnlyNonceOperation(transaction: string): void {
+  const tx = new Transaction(transaction, networkPassphrase);
+  const ops = tx.operations;
+  if (ops.length !== 1 || ops[0].type !== "manageData") {
+    throw new UnauthorizedError(
+      "Challenge contains unexpected operations",
+      "SEP10_UNEXPECTED_OPERATIONS"
+    );
+  }
+}
+
+// Resolve the client_domain's stellar.toml and confirm the SIGNING_KEY it
+// publishes matches the key that signed the challenge.
+async function verifyClientDomain(transaction: string, clientDomainAccountID: string): Promise<void> {
+  const clientDomain = WebAuth.readChallengeTx(
+    transaction,
+    getServerKeypair().publicKey(),
+    networkPassphrase,
+    config.HOME_DOMAIN,
+    config.WEB_AUTH_DOMAIN
+  ).clientDomain;
+  if (!clientDomain) {
+    throw new UnauthorizedError(
+      "Challenge is missing client_domain",
+      "SEP10_CLIENT_DOMAIN_MISSING"
+    );
+  }
+  const signingKey = await fetchClientDomainSigningKey(clientDomain);
+  if (signingKey !== clientDomainAccountID) {
+    throw new UnauthorizedError(
+      "client_domain signature does not match stellar.toml SIGNING_KEY",
+      "SEP10_CLIENT_DOMAIN_MISMATCH"
+    );
+  }
+}
+
+// Fetch https://<domain>/.well-known/stellar.toml and extract SIGNING_KEY.
+async function fetchClientDomainSigningKey(domain: string): Promise<string> {
+  const url = `https://${domain}/.well-known/stellar.toml`;
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new AppError("Unable to resolve client_domain stellar.toml", {
+      code: "CLIENT_DOMAIN_LOOKUP_FAILED",
+      status: 502,
+      retryable: true,
+    });
+  }
+  if (!response.ok) {
+    throw new AppError("Unable to resolve client_domain stellar.toml", {
+      code: "CLIENT_DOMAIN_LOOKUP_FAILED",
+      status: 502,
+      retryable: true,
+    });
+  }
+  const toml = await response.text();
+  const match = toml.match(/^\s*SIGNING_KEY\s*=\s*"([^"]+)"/m);
+  if (!match) {
+    throw new UnauthorizedError(
+      "client_domain stellar.toml is missing SIGNING_KEY",
+      "SEP10_CLIENT_DOMAIN_NO_SIGNING_KEY"
+    );
+  }
+  return match[1];
 }
 
 authRouter.post(

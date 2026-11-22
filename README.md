@@ -113,5 +113,8 @@ This project is in **active development on Stellar testnet**. It has not been au
 
 ## Handsoff notes
 
-<!-- handsoff-issue-263 -->
-- #263: `execute_recovery` leaves the compromised admin's pending upgrade and configuration in place
+<!-- handsoff-issue-269 -->
+- #269: USD-denominated aggregate spend limits across all assets
+
+<!-- handsoff-issue-270 -->
+- #270: New-destination cooldown and trusted address book enforced on-chain

@@ -1,5 +1,10 @@
 import { AppError, HorizonError, NotFoundError } from "../errors/appError";
 
+export {
+  UpstreamResponseTooLargeError,
+  UpstreamValidationError,
+} from "./upstreamValidation";
+
 export class SequenceConflictError extends HorizonError {
   constructor(message: string, readonly horizonResultCodes?: unknown) {
     super(message, {

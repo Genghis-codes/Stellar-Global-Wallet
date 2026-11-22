@@ -1,60 +1,89 @@
-# Security & Privacy Model
+# Security Model
 
-This document describes the threat model, the personal data we store, and the
-retention and deletion guarantees for the backend. It is the reference for
-issue #261 (data retention and privacy).
+This document describes the security properties of the backend and the
+client-side guarantees it relies on. It is the design note for encrypted key
+backup (issue #274) and the threat model that surrounds it.
 
-## Threat model
+## Scope
 
-- **Assets:** user emails, registered devices, user preferences, audit log
-  entries, and recovery metadata.
-- **Adversaries:** an attacker with read access to the database (backup leak,
-  SQL injection, misconfigured replica) and a curious operator.
-- **Goals:** minimise the personal data we keep, bound how long we keep it, and
-  let a user export or erase everything tied to their account.
-- **Non-goals:** defending against a fully compromised application host (it can
-  read live data by design) or against the user themselves.
+The backend is a **zero-knowledge blob store** for encrypted key backups. It
+never sees plaintext secrets, passphrases, or derived keys. All cryptography
+happens on the client.
 
-## Data inventory
+## Encrypted key backup
 
-| Data | Where | Personal? | Retention |
-| --- | --- | --- | --- |
-| Email address | `users.email` | Yes | Life of the account; erased on deletion |
-| Registered devices | `devices` | Yes (device identifiers) | Purged when stale (see below) |
-| User preferences | `preferences` | Yes (behavioural) | Life of the account; erased on deletion |
-| Audit log entries | `audit_log` | Yes (actor + metadata) | Purged after the retention window |
-| Recovery metadata | recovery tables | Yes | Life of the account; erased on deletion |
+### Data model
 
-## Retention
+A backup blob is an opaque, client-encrypted payload. The server stores:
 
-- **Audit logs** are retained for a bounded window and then purged by the
-  retention job. Only the fields needed for security review are kept; free-form
-  metadata is not stored.
-- **Stale devices** that have not been seen within the retention window are
-  removed by the retention job so abandoned identifiers do not accumulate.
-- Retention jobs are idempotent and safe to run repeatedly; they only delete
-  rows older than the configured window.
+| Field        | Type   | Notes                                                        |
+| ------------ | ------ | ------------------------------------------------------------ |
+| `id`         | string | Server-assigned identifier.                                  |
+| `owner`      | string | Authenticated account that owns the blob.                    |
+| `ciphertext` | string | Base64 client ciphertext. Opaque to the server.              |
+| `nonce`      | string | Base64 nonce/IV chosen by the client.                        |
+| `kdf`        | object | Public KDF parameters (algorithm, salt, memory, iterations).  |
+| `version`    | number | Envelope version for forward compatibility.                  |
+| `createdAt`  | string | ISO-8601 timestamp.                                          |
+| `updatedAt`  | string | ISO-8601 timestamp.                                          |
 
-## Export and deletion
+The server validates shape and size at the edge (base64, max length, known
+`kdf.algorithm`, positive integer cost parameters) and rejects anything else
+with the shared error envelope and a stable error code
+(`BACKUP_INVALID_PAYLOAD`, `BACKUP_TOO_LARGE`, `BACKUP_NOT_FOUND`,
+`BACKUP_FORBIDDEN`, `BACKUP_RATE_LIMITED`).
 
-- **Export:** an authenticated user can request a machine-readable export of all
-  personal data we hold for them (email, devices, preferences, audit entries).
-- **Deletion:** an authenticated user can request erasure of all personal data.
-  Deletion removes emails, devices, preferences, and audit log entries for that
-  user. The operation is scoped strictly to the authenticated user; requests for
-  other users are rejected.
+### Client-side encryption spec
 
-## Failure modes
+1. The client derives a symmetric key from the user's passphrase using
+   **Argon2id** with a per-backup random salt and conservative cost parameters
+   (memory >= 64 MiB, iterations >= 3, parallelism >= 1). Alternatively, a
+   passkey **PRF** extension output may be used directly as key material.
+2. The derived key wraps the wallet secret with an authenticated cipher
+   (AEAD, e.g. XChaCha20-Poly1305 or AES-256-GCM) using a fresh random nonce.
+3. The client uploads only `ciphertext`, `nonce`, and the public `kdf`
+   parameters. The passphrase and derived key never leave the device.
+4. On recovery, the client fetches the blob, re-derives the key from the
+   passphrase (or passkey PRF), and decrypts locally. A failed AEAD tag means a
+   wrong passphrase or tampered ciphertext; the client surfaces a generic error
+   and never retries with server-held material.
 
-- A retention job that fails part-way leaves already-deleted rows deleted and
-  the rest intact; the next run resumes. No partial row is left behind because
-  each delete is a single statement.
-- Export and deletion require authentication; unauthenticated or cross-user
-  requests return the shared error envelope with a stable error code.
+### Recovery flow
 
-## Contracts
+1. User authenticates to the backend.
+2. Client requests the backup blob for the authenticated account.
+3. Client re-derives the wrapping key from the passphrase or passkey PRF.
+4. Client decrypts locally and restores the secret.
+5. If decryption fails, the client reports a wrong-passphrase error; the server
+   is never asked to decrypt or validate plaintext.
 
-- Every privileged path (export, deletion, retention) has a negative test
-  covering unauthenticated and cross-user access.
-- Amounts are handled as strings and addresses are checksum-validated at the
-  edge, consistent with the rest of the backend.
+### Threat model
+
+| Threat                                   | Mitigation                                                        |
+| ---------------------------------------- | ----------------------------------------------------------------- |
+| Server compromise / DB leak              | Only ciphertext, nonce, and public KDF params are stored.         |
+| Malicious insider at the server          | Cannot derive keys without the user's passphrase or passkey.      |
+| Network eavesdropping                    | TLS in transit; payload is already ciphertext at rest.            |
+| Offline brute force of a stolen blob     | Argon2id with high memory/time cost; strong passphrase required.  |
+| Tampering with stored ciphertext         | AEAD authentication tag rejects modified ciphertext.              |
+| Cross-account access                     | Auth required; blobs are scoped to the authenticated owner.       |
+| Abuse / enumeration                      | Per-account and per-IP rate limiting on the blob endpoints.       |
+
+**Out of scope:** a compromised client device, a weak user passphrase, and
+loss of the passphrase/passkey (which makes the backup unrecoverable by
+design).
+
+### Failure modes
+
+- **Wrong passphrase:** AEAD tag mismatch; client shows a generic error.
+- **Missing blob:** `BACKUP_NOT_FOUND`; client prompts the user to restore from
+  a seed phrase instead.
+- **Oversized or malformed payload:** rejected at the edge with
+  `BACKUP_INVALID_PAYLOAD` / `BACKUP_TOO_LARGE`.
+- **Rate limited:** `BACKUP_RATE_LIMITED`; client backs off and retries.
+
+## Tests
+
+The backup test suite includes a negative test asserting that a server-side
+compromise (reading the stored blob) yields only ciphertext and public KDF
+parameters, never plaintext or derived keys.

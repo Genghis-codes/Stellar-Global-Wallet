@@ -1,4 +1,3 @@
-import { Pool } from "pg";
 import {
   FeeBumpTransaction,
   Keypair,
@@ -6,6 +5,7 @@ import {
   TransactionBuilder,
   xdr as Xdr,
 } from "@stellar/stellar-sdk";
+import { Queryable, TransactionalPool, withAccountContext, withServiceRole } from "../db";
 import { AppError } from "../errors/appError";
 
 /**
@@ -111,6 +111,13 @@ export function expiryOf(tx: Transaction): string | null {
 export interface PendingTxStore {
   create(row: Omit<PendingTx, "id" | "createdAt" | "updatedAt">): Promise<PendingTx>;
   get(id: string): Promise<PendingTx | null>;
+  /**
+   * Optional lookup used exclusively by `routes/pendingTx.ts` before verifying
+   * on-chain multisig signer weights (`assertSigner`), since a co-signer's JWT
+   * `sub` differs from the source account's `pending_txs.account`.
+   */
+  getForSignerCheck?(id: string): Promise<PendingTx | null>;
+  withAccountScope?<T>(account: string, fn: (scopedStore: PendingTxStore) => Promise<T>): Promise<T>;
   listForAccount(account: string): Promise<PendingTx[]>;
   update(
     id: string,
@@ -133,7 +140,32 @@ interface PendingTxRow {
 
 /** Postgres-backed store over the pending_txs table created in db.ts. */
 export class PgPendingTxStore implements PendingTxStore {
-  constructor(private readonly db: Pool) {}
+  constructor(private readonly db: Queryable & { connect?: TransactionalPool["connect"] }) {}
+
+  async getForSignerCheck(id: string): Promise<PendingTx | null> {
+    if (!/^\d+$/.test(id)) return null;
+    return withServiceRole(
+      async (tx) => {
+        const { rows } = await tx.query<PendingTxRow>(
+          "SELECT * FROM pending_txs WHERE id = $1",
+          [id]
+        );
+        return rows[0] ? this.toPendingTx(rows[0]) : null;
+      },
+      { jobName: "pendingTx.signerCheck", db: this.db }
+    );
+  }
+
+  async withAccountScope<T>(
+    account: string,
+    fn: (scopedStore: PendingTxStore) => Promise<T>
+  ): Promise<T> {
+    return withAccountContext(
+      account,
+      (tx) => fn(new PgPendingTxStore(tx)),
+      this.db
+    );
+  }
 
   private toPendingTx(row: PendingTxRow): PendingTx {
     const expired =

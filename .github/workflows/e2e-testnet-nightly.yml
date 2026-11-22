@@ -5,18 +5,34 @@ name: E2E Testnet Nightly
 # read and a rejection check against the live globe-wallet contract. This
 # is deliberately separate from backend.yml's `npm test`, which never
 # touches the network.
+#
+# It also carries the next-protocol readiness job (#286): a weekly run of the
+# contract workspace against the next soroban-sdk and the e2e suite against
+# the quickstart `future`/next image, so protocol upgrades surface early.
+# See docs/protocol-upgrade-checklist.md for the upgrade process.
 
 on:
   schedule:
     # 03:00 UTC daily.
     - cron: "0 3 * * *"
-  workflow_dispatch: {}
+    # 04:00 UTC every Monday — next-protocol readiness (#286).
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      next_protocol:
+        description: "Run the next-protocol readiness job"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   e2e-testnet:
+    # Skip the daily testnet run when the manual dispatch asks for the
+    # next-protocol job only.
+    if: github.event.schedule != '0 4 * * 1' && !inputs.next_protocol
     runs-on: ubuntu-latest
     # Testnet is occasionally flaky; the suite already retries Friendbot
     # funding/account loads itself, so a job-level retry would only mask a
@@ -51,3 +67,88 @@ jobs:
         if: failure()
         run: |
           echo "::error::Testnet e2e suite failed — see the 'Run testnet e2e suite' step above for which of build/sign/submit payment, path payment, or the contract call broke. This talks to real testnet infrastructure (Horizon, Soroban RPC, Friendbot), so also rule out a testnet outage before treating this as a code regression."
+
+  next-protocol:
+    # Weekly (Monday 04:00 UTC) or manual dispatch with next_protocol=true.
+    if: github.event.schedule == '0 4 * * 1' || inputs.next_protocol
+    runs-on: ubuntu-latest
+    continue-on-error: false
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Run contract workspace against next soroban-sdk
+        working-directory: contract
+        # `cargo update` pulls the newest compatible soroban-sdk within the
+        # manifest's version requirement; `--precise` is not used so the
+        # resolver picks the next published release. A failure here is the
+        # early warning that a protocol/SDK bump breaks the contract.
+        run: |
+          cargo update -p soroban-sdk
+          cargo test --workspace
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build workspace packages the backend imports
+        run: |
+          npm run build --workspace packages/bindings/globe-wallet
+          npm run build --workspace packages/sdk
+
+      - name: Run e2e suite against quickstart future/next image
+        run: npm run test:e2e --workspace backend -- --verbose
+        env:
+          E2E_TESTNET: "1"
+          # Point the suite at the next-protocol quickstart image when the
+          # backend honours this override; otherwise it falls back to the
+          # default testnet endpoints.
+          STELLAR_QUICKSTART_IMAGE: "stellar/quickstart:future"
+
+      - name: Open tracking issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = 'Next-protocol readiness run failed';
+            const body = [
+              'The weekly next-protocol readiness job (#286) failed.',
+              '',
+              `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '',
+              'This is an early warning that a protocol/SDK bump breaks the contract or e2e suite.',
+              'Follow docs/protocol-upgrade-checklist.md and record the breaking change there.',
+            ].join('\n');
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'protocol-upgrade',
+            });
+            if (existing.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['protocol-upgrade'],
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.data[0].number,
+                body,
+              });
+            }

@@ -86,6 +86,20 @@ const envSchema = z.object({
   // reusing HORIZON_URL/NETWORK_PASSPHRASE.
   SOROBAN_RPC_URL: z.string().url().default("https://soroban-testnet.stellar.org"),
   SOROBAN_NETWORK_PASSPHRASE: z.string().min(1).default("Test SDF Network ; September 2015"),
+  // #294 — upper bound (in bytes) on individual Horizon REST and Soroban RPC
+  // responses accepted before failing closed with a 502 typed error.
+  HORIZON_MAX_RESPONSE_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(50 * 1024 * 1024)
+    .default(2 * 1024 * 1024),
+  SOROBAN_RPC_MAX_RESPONSE_BYTES: z.coerce
+    .number()
+    .int()
+    .positive()
+    .max(50 * 1024 * 1024)
+    .default(2 * 1024 * 1024),
   // Deployed globe-wallet contract ID (C...). Optional so the API can still
   // boot without it; /api/v1/contract/wallet/* routes respond 503 until set.
   // When present, must be a valid Soroban contract StrKey: the letter C

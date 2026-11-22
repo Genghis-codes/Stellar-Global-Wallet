@@ -9,6 +9,57 @@ secret key to the backend.
 Horizon/Soroban URLs, contract IDs, feature availability, and API/client
 versions. It does not expose server secrets.
 
+## Human-readable transaction preview
+
+Before asking the user to sign, decode the unsigned XDR into structured
+intents with the SDK decoder (`packages/sdk`). The decoder turns the envelope
+and any Soroban authorization entries into a list of intents the client can
+render, so users never blind-sign.
+
+```ts
+import { decodeTransactionPreview } from "@stellar-global-wallet/sdk";
+
+const preview = decodeTransactionPreview(build.xdr, {
+  networkPassphrase: build.networkPassphrase,
+  // Optional: contract specs let the decoder name contract calls and args.
+  contractSpecs: [walletAssetsSpec],
+});
+
+// preview.intents: transfers, trustline changes, contract calls (with decoded
+// args when a spec is available), and Soroban auth sub-invocations.
+// preview.risks: highlighted risky patterns (see below).
+// preview.balanceChanges: simulated balance deltas (see below).
+```
+
+Each intent is a discriminated union so clients can render every transaction
+type consistently:
+
+- `transfer` — source, destination, asset, amount (decimal string).
+- `trustline` — account, asset, limit change, and reserve delta.
+- `contractCall` — contract ID, function name, and decoded arguments when a
+  matching contract spec is supplied; otherwise the raw args are returned.
+- `authEntry` — Soroban authorization entries, including the sub-invocations
+  they authorize, so users can see what a dApp is being granted.
+
+### Risky patterns
+
+The decoder flags patterns that warrant extra confirmation. Treat these as
+warnings to surface prominently, not as automatic blocks:
+
+- `signerChange` — operations that add, remove, or re-weight account signers.
+- `allowanceApproval` — Soroban auth that approves a token allowance or
+  delegates spending on the user's behalf.
+- `unknownContract` — a contract call or auth entry whose contract ID is not
+  in the supplied contract specs, so its effects cannot be fully decoded.
+
+### Simulated balance changes
+
+When simulation is available, `preview.balanceChanges` lists the expected
+balance deltas per account and asset (amounts as decimal strings). Show these
+next to the intents so users can confirm the net effect before signing. If
+simulation fails, the preview still returns intents and risks; surface the
+simulation error rather than hiding it.
+
 ## Build and sign a trustline change
 
 `POST /api/v1/wallet/trustline/build` requires authentication and accepts an

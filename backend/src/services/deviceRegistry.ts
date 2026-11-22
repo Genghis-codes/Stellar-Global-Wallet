@@ -23,9 +23,15 @@
  * Tokens are scoped strictly to the authenticated account: every read/write
  * filters by account so one user can never enumerate or delete another's
  * device.
+ *
+ * Risk engine (#278): the registry also exposes a privacy-preserving
+ * fingerprint helper used by the outgoing-payment risk engine to detect
+ * "new device" signals.  Only a salted SHA-256 hash of the device token is
+ * ever persisted/compared — the raw token never leaves this module.
  */
 
 import { Pool } from "pg";
+import { createHash } from "crypto";
 import { pool } from "../db";
 import { config } from "../config";
 
@@ -53,8 +59,20 @@ export interface DeviceResponse {
   expires_at: string | null;
 }
 
+/**
+ * Returns a stable, privacy-preserving fingerprint for a device token.
+ *
+ * The raw token is never stored in risk tables; only this salted hash is
+ * compared so the risk engine can tell "seen this device before" from
+ * "brand new device" without retaining identifying material.
+ */
+export function deviceFingerprint(token: string): string {
+  const salt = config.RISK_FINGERPRINT_SALT ?? "";
+  return createHash("sha256").update(`${salt}:${token}`).digest("hex");
+}
+
 /** Lazily creates the devices table (called by ensureAuditTable in db.ts). */
-export async function ensureDevicesTable(db: Pool = pool): Promise<void> {
+export async function ensureDevicesTable(db: Queryable = pool): Promise<void> {
   await db.query(`
     CREATE TABLE IF NOT EXISTS devices (
       id           BIGSERIAL    PRIMARY KEY,
@@ -83,7 +101,7 @@ export async function upsertDevice(
   platform: Platform,
   token: string,
   locale: string,
-  db: Pool = pool
+  db: Queryable = pool
 ): Promise<Device> {
   const expiresAt =
     platform === "expo"
@@ -128,7 +146,7 @@ export async function upsertDevice(
 export async function deleteDevice(
   account: string,
   deviceId: string,
-  db: Pool = pool
+  db: Queryable = pool
 ): Promise<boolean> {
   const { rowCount } = await db.query(
     `DELETE FROM devices WHERE id = $1 AND account = $2`,
@@ -203,7 +221,7 @@ export async function getValidDevicesForAccount(
  */
 export async function getValidDevicesForAccounts(
   accounts: string[],
-  db: Pool = pool
+  db: Queryable = pool
 ): Promise<Device[]> {
   if (accounts.length === 0) return [];
   const placeholders = accounts.map((_, i) => `$${i + 1}`).join(",");
@@ -267,4 +285,23 @@ export function deviceToResponse(device: Device): DeviceResponse {
     last_seen_at: device.lastSeenAt.toISOString(),
     expires_at: device.expiresAt?.toISOString() ?? null,
   };
+}
+
+/**
+ * Returns true when the given device token has been seen for the account
+ * before (i.e. it is a known device).  Used by the outgoing-payment risk
+ * engine (#278) to flag "new device" signals.  Comparison is done on the
+ * salted fingerprint so no raw token is retained for risk purposes.
+ */
+export async function isKnownDevice(
+  account: string,
+  token: string,
+  db: Pool = pool
+): Promise<boolean> {
+  const { rows } = await db.query<{ token: string }>(
+    `SELECT token FROM devices WHERE account = $1`,
+    [account]
+  );
+  const fingerprint = deviceFingerprint(token);
+  return rows.some((r) => deviceFingerprint(r.token) === fingerprint);
 }
