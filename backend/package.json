@@ -23,7 +23,7 @@
     "@globe-wallet/sdk": "^0.1.0",
     "@iarna/toml": "^2.2.5",
     "@stellar-global-wallet/types": "^0.1.0",
-    "@stellar/stellar-sdk": "^16.0.1",
+    "@stellar/stellar-sdk": "^17.4.0",
     "cors": "^2.8.5",
     "dotenv": "^18.0.9",
     "express": "^4.19.2",
