@@ -20,6 +20,7 @@
     "backfill:fx": "tsx scripts/backfillFxSnapshots.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1176.0",
     "@globe-wallet/sdk": "^0.1.0",
     "@iarna/toml": "^2.2.5",
     "@stellar-global-wallet/types": "^0.1.0",
