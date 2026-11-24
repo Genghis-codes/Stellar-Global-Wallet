@@ -164,3 +164,101 @@ Redis is unreachable, and at runtime the client runs with
 (histogram), `account_lock_contended_total`, `account_lock_failures_total`
 (`reason="timeout"|"unavailable"`) and `account_lock_lease_lost_total`, all
 labelled by `backend`.
+
+## Channel account pool (issue #292)
+
+The per-source-account lock above makes a single source account **correct**
+under concurrency, but it also makes it **serial**: every sponsored
+submission from that account waits for the previous one to land. Stellar
+gives each account one sequence number per ledger, so one source account
+caps throughput at roughly one transaction per ledger (~5s) no matter how
+many requests arrive.
+
+The channel account pool removes that cap by spreading sponsored
+submissions across N pre-funded "channel" accounts, each of which has its
+own sequence number and can therefore submit in parallel. With N healthy
+channels you get ~N transactions per ledger.
+
+### How it fits with the account lock
+
+The two mechanisms are complementary and both stay in place:
+
+| Concern | Mechanism |
+|---|---|
+| Two requests must not reuse one account's sequence number | `AccountLock` (in-process or Redis) — unchanged |
+| Many requests must not queue behind one account | Channel pool — a submission leases a *free* channel, so requests for different channels never contend |
+
+A sponsored submission now:
+
+1. Acquires a **lease** on a channel account from the pool (see below).
+2. Runs the existing read-build-sign-submit sequence under
+   `withLock(channelPublicKey, ...)` — the lock is now keyed by the
+   *channel* account, not the treasury/source account.
+3. Releases the lease back to the pool.
+
+Because the lock key is the channel, two concurrent submissions that lease
+different channels proceed in parallel; two that somehow lease the same
+channel still serialise safely. The lock remains the last line of defence
+against sequence reuse; the pool is what gives you parallelism.
+
+### Lease semantics
+
+- A lease is granted to exactly one in-flight submission at a time. A
+  channel with an active lease is never handed to a second submission.
+- Leases are **time-bounded** (same TTL discipline as the account lock,
+  comfortably above the worst-case submission time). A submission that
+  crashes or hangs without releasing its lease does not wedge that channel
+  forever — the lease expires and the channel returns to the pool.
+- Leases are **token-checked on release**, so a submission whose lease
+  already expired cannot release a channel that a newer submission now
+  holds.
+- When every channel is leased, acquisition waits up to `maxWaitMs` and
+  then fails closed with the existing `LOCK_TIMEOUT` (503, retryable)
+  envelope — a request is refused, never submitted on a contended channel.
+- With `LOCK_BACKEND=redis`, leases live in Redis alongside the account
+  locks, so the pool is shared across every API instance. With
+  `in-process`, the pool is per-process (same single-instance caveat as
+  the lock — see above).
+
+### Fee-bump from treasury
+
+Sponsored transactions are wrapped in a **fee-bump** transaction whose fee
+source is the treasury account, not the channel account:
+
+- The inner transaction is built and signed by the channel account (which
+  supplies the sequence number).
+- The outer fee-bump is signed by the treasury key and pays the network
+  fee, so channel accounts never need a large XLM balance for fees — only
+  the minimum reserve plus a small buffer.
+- This keeps fee policy in one place (the treasury) and lets fees be
+  raised without re-funding every channel.
+
+### Auto top-up and monitoring
+
+Channel accounts must stay above the minimum reserve or their
+transactions are rejected. The pool therefore:
+
+- **Monitors** each channel's XLM balance and reports it via
+  `GET /api/v1/health/metrics` (per-channel balance gauge, plus
+  `channel_pool_leased` / `channel_pool_available` gauges and a
+  `channel_pool_lease_wait_ms` histogram).
+- **Auto-tops-up** any channel that drops below a configured threshold by
+  sending a payment from the treasury, subject to the same lock discipline
+  so top-ups never race a submission on that channel.
+- Emits `channel_pool_topup_total` and `channel_pool_topup_failures_total`
+  so a treasury that is itself running dry is visible before submissions
+  start failing.
+
+### When to enable it
+
+- **Single instance, low volume:** the pool is optional. The account lock
+  alone is correct; you just get one tx per ledger.
+- **High-throughput sponsored submissions, or multiple instances:** enable
+  the pool (`CHANNEL_POOL_ENABLED=true`, `CHANNEL_POOL_SIZE=N`) and set
+  `LOCK_BACKEND=redis` so leases and locks are shared across instances.
+- Size the pool to your target throughput: N channels ≈ N tx/ledger. Each
+  channel costs the base reserve plus a small fee buffer, funded from the
+  treasury.
+
+If the pool is disabled, behaviour is exactly as documented above — a
+single source account serialised by the account lock.

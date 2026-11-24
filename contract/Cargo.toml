@@ -18,6 +18,14 @@ members = [
 # overrides this pin with the next soroban-sdk release to surface protocol
 # breakage early. Keep the version string on its own line so the job's
 # `sed` override stays a one-line, reviewable change.
+#
+# Issue #336: the next-protocol run failed because the next SDK release
+# (27.x) is a breaking bump, not a drop-in replacement for 21.7.7. The
+# workspace now compiles against both lines: the contracts and their tests
+# were migrated to the 27.x API (see docs/protocol-upgrade-checklist.md for
+# the recorded breaking changes), and the e2e testnet flow was adjusted for
+# the changed SDK behaviour. The pin below stays on the reviewed 21.7.7
+# release for deploy builds; the next-protocol job exercises 27.x.
 soroban-sdk = { version = "21.7.7" }
 
 # `soroban-env-host` 21.2.1 — a transitive dependency of `soroban-sdk`

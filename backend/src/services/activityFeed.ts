@@ -6,10 +6,33 @@ import { metrics } from "./metrics";
 
 export interface UnifiedActivityItem {
   id: string;
-  source: "payment" | "contract_event";
+  source: "payment" | "contract_event" | "claimable_balance";
   timestamp: string; // ISO 8601
   type: string;
   details: Record<string, unknown>;
+}
+
+/**
+ * Evaluated predicate state for a claimable balance, as surfaced in the feed.
+ * - `claimable_now`: no predicates, or all predicates currently satisfied.
+ * - `claimable_after`: not yet claimable; becomes claimable at `claimableAfter`.
+ * - `claimable_before`: claimable now but expires at `claimableBefore`.
+ * - `expired`: the `not`/`before` window has passed; no longer claimable.
+ */
+export type ClaimableBalanceState =
+  | "claimable_now"
+  | "claimable_after"
+  | "claimable_before"
+  | "expired";
+
+export interface ClaimableBalancePredicateSummary {
+  state: ClaimableBalanceState;
+  /** ISO 8601 timestamp when the balance becomes claimable, if bounded. */
+  claimableAfter?: string;
+  /** ISO 8601 timestamp when the balance stops being claimable, if bounded. */
+  claimableBefore?: string;
+  /** Human-readable reason for the current state. */
+  reason: string;
 }
 
 export interface ActivityFeedResponse {
@@ -63,6 +86,162 @@ export function decodeCompositeCursor(cursorStr?: string): CompositeCursor | nul
  */
 export function encodeCompositeCursor(cursor: CompositeCursor): string {
   return Buffer.from(JSON.stringify(cursor)).toString("base64");
+}
+
+/**
+ * Horizon operation types that create or consume claimable balances.
+ */
+const CLAIMABLE_BALANCE_OP_TYPES = new Set([
+  "create_claimable_balance",
+  "claim_claimable_balance",
+]);
+
+/**
+ * Extracts the absolute-time bounds from a Horizon claim predicate tree.
+ * Horizon predicates are recursive: `{unconditional: true}`, `{not: p}`,
+ * `{and: [p, ...]}`, `{or: [p, ...]}`, `{abs_before: iso}`,
+ * `{abs_before_epoch: "123"}` or `{abs_after: iso}` / `{abs_after_epoch: "123"}`.
+ * Returns the tightest lower/upper bounds found anywhere in the tree.
+ */
+export function extractPredicateBounds(
+  predicate: unknown
+): { after?: Date; before?: Date } {
+  const bounds: { after?: Date; before?: Date } = {};
+
+  const mergeAfter = (d: Date) => {
+    if (!bounds.after || d.getTime() > bounds.after.getTime()) bounds.after = d;
+  };
+  const mergeBefore = (d: Date) => {
+    if (!bounds.before || d.getTime() < bounds.before.getTime()) bounds.before = d;
+  };
+
+  const toDate = (value: unknown): Date | null => {
+    if (typeof value === "string" && value.length > 0) {
+      const asNumber = Number(value);
+      const d = Number.isFinite(asNumber) && /^\d+$/.test(value)
+        ? new Date(asNumber * 1000)
+        : new Date(value);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+    return null;
+  };
+
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    const obj = node as Record<string, unknown>;
+
+    if (obj.abs_after !== undefined || obj.abs_after_epoch !== undefined) {
+      const d = toDate(obj.abs_after ?? obj.abs_after_epoch);
+      if (d) mergeAfter(d);
+    }
+    if (obj.abs_before !== undefined || obj.abs_before_epoch !== undefined) {
+      const d = toDate(obj.abs_before ?? obj.abs_before_epoch);
+      if (d) mergeBefore(d);
+    }
+    if (Array.isArray(obj.and)) obj.and.forEach(walk);
+    if (Array.isArray(obj.or)) obj.or.forEach(walk);
+    if (obj.not !== undefined) walk(obj.not);
+  };
+
+  walk(predicate);
+  return bounds;
+}
+
+/**
+ * Evaluates a Horizon claim predicate against `now` and returns a summary
+ * suitable for the activity feed. Pure function: no I/O, deterministic given
+ * `now`, which keeps it trivially unit-testable.
+ */
+export function evaluateClaimPredicate(
+  predicate: unknown,
+  now: Date = new Date()
+): ClaimableBalancePredicateSummary {
+  const { after, before } = extractPredicateBounds(predicate);
+  const nowMs = now.getTime();
+
+  if (before && nowMs >= before.getTime()) {
+    return {
+      state: "expired",
+      claimableAfter: after?.toISOString(),
+      claimableBefore: before.toISOString(),
+      reason: "predicate expired",
+    };
+  }
+
+  if (after && nowMs < after.getTime()) {
+    return {
+      state: "claimable_after",
+      claimableAfter: after.toISOString(),
+      claimableBefore: before?.toISOString(),
+      reason: "predicate not yet satisfied",
+    };
+  }
+
+  if (before) {
+    return {
+      state: "claimable_before",
+      claimableAfter: after?.toISOString(),
+      claimableBefore: before.toISOString(),
+      reason: "claimable until predicate expires",
+    };
+  }
+
+  return {
+    state: "claimable_now",
+    claimableAfter: after?.toISOString(),
+    reason: "unconditional",
+  };
+}
+
+/**
+ * Maps a Horizon claimable-balance operation record into a unified activity
+ * item. Returns null for unrelated operation types so callers can filter.
+ */
+export function claimableBalanceActivityItem(
+  op: Record<string, unknown>,
+  now: Date = new Date()
+): UnifiedActivityItem | null {
+  const type = typeof op.type === "string" ? op.type : "";
+  if (!CLAIMABLE_BALANCE_OP_TYPES.has(type)) return null;
+
+  const id =
+    typeof op.id === "string" && op.id.length > 0
+      ? op.id
+      : `${type}:${String(op.transaction_hash ?? "")}:${String(op.paging_token ?? "")}`;
+  const timestamp =
+    typeof op.created_at === "string" && op.created_at.length > 0
+      ? op.created_at
+      : now.toISOString();
+
+  if (type === "create_claimable_balance") {
+    const predicate = evaluateClaimPredicate(op.claimants, now);
+    return {
+      id,
+      source: "claimable_balance",
+      timestamp,
+      type,
+      details: {
+        balanceId: op.balance_id ?? null,
+        asset: op.asset ?? null,
+        amount: typeof op.amount === "string" ? op.amount : String(op.amount ?? ""),
+        sponsor: op.sponsor ?? null,
+        sourceAccount: op.source_account ?? null,
+        predicate,
+      },
+    };
+  }
+
+  return {
+    id,
+    source: "claimable_balance",
+    timestamp,
+    type,
+    details: {
+      balanceId: op.balance_id ?? null,
+      claimant: op.claimant ?? null,
+      sourceAccount: op.source_account ?? null,
+    },
+  };
 }
 
 function parseScValTopic(val: unknown): string | null {

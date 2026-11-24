@@ -11,6 +11,8 @@ import { requireAccountMatch } from "../middleware/requireAccountMatch";
 import { isValidMuxedId } from "../utils/muxed";
 import { computeMultisigInfo, computeReserveBreakdown, spendableBalance } from "../services/accountInfo";
 import { MAX_EXPORT_RANGE_MS, streamTransactionCsv } from "../services/transactionExport";
+import { buildAccountClose, buildClaimableBalanceClaim, buildClaimableBalanceReclaim, listClaimableBalances } from "../services/claimableBalances";
+import { isValidClaimableBalanceId } from "../utils/claimableBalanceId";
 
 // #24 — shared cursor pagination contract. `cursor` is an opaque paging token
 // (e.g. a Horizon cursor) that is passed through untouched; `limit` is capped
@@ -252,6 +254,110 @@ export function createAccountRouter(stellar: StellarService): Router {
           next: result.next,
           hasMore: result.hasMore,
         });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // #288 — close wallet flow. Builds (and optionally simulates) the full
+  // sequence: cancel offers, convert/send balances, remove trustlines,
+  // remove signers/data, merge account. Authenticated: the sequence moves
+  // funds and destroys the account.
+  accountRouter.post(
+    "/:publicKey/close/build",
+    jwtAuth,
+    requireAccountMatch((req) => req.params.publicKey),
+    param("publicKey").custom(isGAddress).withMessage(publicKeyMessage),
+    body("destination")
+      .exists({ checkNull: true })
+      .bail()
+      .custom(isGAddress)
+      .withMessage(publicKeyMessage),
+    body("dryRun").optional().isBoolean().withMessage("dryRun must be a boolean").toBoolean(),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const result = await buildAccountClose(stellar, {
+          publicKey: req.params.publicKey,
+          destination: req.body.destination,
+          dryRun: req.body.dryRun === true,
+        });
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // #289 — claimable balances with evaluated predicates (claimable
+  // now/after/before) so clients can show what is actionable.
+  accountRouter.get(
+    "/:publicKey/claimable-balances",
+    param("publicKey").custom(isGAddress).withMessage(publicKeyMessage),
+    query("limit")
+      .optional()
+      .isInt({ min: 1, max: MAX_PAGE_LIMIT })
+      .withMessage("limit must be an integer between 1 and 100")
+      .toInt(),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const { limit, cursor } = parsePageQuery({
+          cursor: req.query.cursor,
+          limit: req.query.limit,
+        });
+        const result = await listClaimableBalances(stellar, {
+          publicKey: req.params.publicKey,
+          limit: limit ?? DEFAULT_PAGE_LIMIT,
+          cursor,
+        });
+        const page = paginate(result.balances, result.next);
+        res.json({ ...page, hasMore: result.hasMore });
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // #289 — build a claim transaction, creating the trustline first when the
+  // account does not hold the asset yet.
+  accountRouter.post(
+    "/:publicKey/claimable-balances/:balanceId/claim/build",
+    jwtAuth,
+    requireAccountMatch((req) => req.params.publicKey),
+    param("publicKey").custom(isGAddress).withMessage(publicKeyMessage),
+    param("balanceId").custom(isValidClaimableBalanceId).withMessage("balanceId must be a valid claimable balance id"),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const result = await buildClaimableBalanceClaim(stellar, {
+          publicKey: req.params.publicKey,
+          balanceId: req.params.balanceId,
+        });
+        res.json(result);
+      } catch (err) {
+        next(err);
+      }
+    }
+  );
+
+  // #289 — build a reclaim transaction for a balance this account sponsored
+  // and whose claimant predicates are no longer satisfiable.
+  accountRouter.post(
+    "/:publicKey/claimable-balances/:balanceId/reclaim/build",
+    jwtAuth,
+    requireAccountMatch((req) => req.params.publicKey),
+    param("publicKey").custom(isGAddress).withMessage(publicKeyMessage),
+    param("balanceId").custom(isValidClaimableBalanceId).withMessage("balanceId must be a valid claimable balance id"),
+    async (req, res, next) => {
+      try {
+        assertValidRequest(req);
+        const result = await buildClaimableBalanceReclaim(stellar, {
+          publicKey: req.params.publicKey,
+          balanceId: req.params.balanceId,
+        });
+        res.json(result);
       } catch (err) {
         next(err);
       }
