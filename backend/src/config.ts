@@ -402,6 +402,100 @@ const envSchema = z.object({
   // Optional CoinGecko demo/pro API key, sent as x-cg-demo-api-key.
   COINGECKO_API_KEY: z.string().optional(),
 
-  // #77 — contract event indexer settings. The indexer worker it
+  // #77 — contract event indexer settings. The indexer worker itself is not
+  // implemented yet (the #141 PR only added config and schema); these are
+  // reserved so its deployment config can be prepared ahead of it.
+  //
+  // Ledger to start indexing from when no cursor exists yet (e.g. the
+  // contract's deploy ledger).
+  INDEXER_START_LEDGER: z.coerce.number().int().min(0).default(0),
+  // How often the worker polls getEvents, in milliseconds.
+  INDEXER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
+  // Max events requested per getEvents page (RPC caps this at 10000).
+  INDEXER_PAGE_SIZE: z.coerce.number().int().positive().max(10000).default(200),
+  // RPC only retains recent events (~7 days on testnet). If the stored
+  // cursor falls further behind the latest ledger than this many ledgers,
+  // the worker logs an alert because the retention gap means events were
+  // permanently lost and a backfill from an archive source is required.
+  INDEXER_RETENTION_GAP_LEDGERS: z.coerce.number().int().positive().default(120960),
 
-/* … truncated 5037 chars — edit only what you need near the top … */
+  // SEP-10 web authentication (GET /api/v1/auth/challenge, POST /token).
+  // SEP10_SIGNING_SECRET is the server's S... key that signs challenges;
+  // the SEP-10 routes answer 503 until it is set. HOME_DOMAIN and
+  // WEB_AUTH_DOMAIN must match what the wallet's stellar.toml advertises.
+  SEP10_SIGNING_SECRET: z
+    .string()
+    .regex(/^S[A-Z2-7]{55}$/, "must be a Stellar secret seed (S...)")
+    .optional(),
+  HOME_DOMAIN: z.string().min(1).default("globewallet.app"),
+  WEB_AUTH_DOMAIN: z.string().min(1).default("globewallet.app"),
+
+  // Fiat conversion for transaction history (see services/fx.ts and
+  // docs/transaction-history.md). Rates move slowly, so cache for an hour.
+  FX_API_URL: z.string().url().default("https://open.er-api.com/v6/latest/USD"),
+  FX_CACHE_TTL_MS: z.coerce.number().int().positive().default(60 * 60 * 1000),
+  // Comma-separated list of currencies to snapshot for historical conversions.
+  // Used for tax reporting and historical value tracking. Only supported
+  // currencies are stored (see SUPPORTED_CURRENCIES in fx.ts).
+  FX_SNAPSHOT_CURRENCIES: z.string().default("EUR,GBP,NGN,KES,GHS"),
+  // Upper bound on operations examined per filtered history page (#58).
+  HISTORY_SCAN_CAP: z.coerce.number().int().positive().max(10000).default(1000),
+
+  // #185 — TTL keeper job. Disabled unless a funded fee-payer secret is set;
+  // the key only pays fees for the permissionless `extend_user_ttl` /
+  // RestoreFootprint transactions and never needs any wallet's authority.
+  TTL_KEEPER_SECRET_KEY: z
+    .string()
+    .regex(/^S[A-Z2-7]{55}$/, "must be a Stellar secret seed (S...)")
+    .optional(),
+  // How often the keeper sweeps active wallets (default: every 6 hours,
+  // well inside the contract's 1-day KEEPER_INTERVAL_LEDGERS).
+  TTL_KEEPER_INTERVAL_MS: z.coerce.number().int().positive().default(6 * 60 * 60 * 1000),
+  // Alert when an entry has fewer than this many ledgers left (~3 days).
+  TTL_KEEPER_ALERT_LEDGERS: z.coerce.number().int().positive().default(17_280 * 3),
+  // A wallet is "active" if one of its devices was seen within this many days.
+  TTL_KEEPER_ACTIVE_DAYS: z.coerce.number().int().positive().default(90),
+
+  // #185/#186 — optional ops webhook (Slack/Discord/PagerDuty-compatible JSON
+  // POST) for near-expiry and upgrade-proposed alerts. Alerts are always
+  // logged; the webhook is an extra channel.
+  OPS_ALERT_WEBHOOK_URL: z.string().url().optional(),
+
+  // #186 — upgrade watcher poll interval.
+  UPGRADE_WATCHER_POLL_MS: z.coerce.number().int().positive().default(30_000),
+
+  // #16 — interactive API docs (Swagger UI at /api/docs, raw spec at
+  // /api/openapi.json). Defaults to enabled outside production and disabled
+  // in production so a prod build never exposes docs unless explicitly
+  // opted in via ENABLE_API_DOCS=true.
+  ENABLE_API_DOCS: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((v) => (v === undefined ? process.env.NODE_ENV !== "production" : v === "true")),
+
+  // #124 — Expo push token TTL. Tokens are pruned after this many seconds
+  // (default: 90 days). Expo tokens are time-limited; clients must re-register
+  // before expiry or they will stop receiving notifications.
+  EXPO_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(90 * 24 * 60 * 60),
+});
+
+export const config = envSchema.parse(process.env);
+
+// Read the package version once at boot. Resolved relative to this file so it
+// works both under ts-node (src/) and compiled output (dist/).
+function readPackageVersion(): string {
+  try {
+    const pkgPath = join(__dirname, "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+    return pkg.version ?? "1.0.0";
+  } catch {
+    return "1.0.0";
+  }
+}
+
+const packageVersion = readPackageVersion();
+const [, packageMinor = "0"] = packageVersion.split(".");
+
+// API major version is fixed by the URL prefix; minor tracks package.json.
+export const API_MAJOR_VERSION = 1;
+export const API_VERSION = `${API_MAJOR_VERSION}.${packageMinor}`;

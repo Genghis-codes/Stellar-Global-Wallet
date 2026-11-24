@@ -110,30 +110,3 @@ export {
 } from "./client.js";
 export type { ApiClientOptions, AuthTokens, RequestOptions, TokenStore } from "./client.js";
 
-/**
- * Hardware-wallet signing (#275): Ledger Stellar app integration for
- * transaction envelopes and Soroban authorization entries, decoupled from
- * the concrete transport (WebHID, BLE) via a `LedgerTransport` abstraction.
- *
- * @example
- * ```ts
- * import { createLedgerSigner, WebHidTransport } from "@globe-wallet/sdk";
- *
- * const signer = createLedgerSigner(new WebHidTransport());
- * await signer.connect();
- * const signed = await signer.signTransaction(tx, { networkPassphrase });
- * ```
- */
-export {
-  LedgerSigner,
-  LedgerError,
-  createLedgerSigner,
-  WebHidTransport,
-  BleTransport,
-} from "./ledger/index.js";
-export type {
-  LedgerTransport,
-  LedgerSignerOptions,
-  LedgerSignature,
-  LedgerErrorCode,
-} from "./ledger/index.js";
