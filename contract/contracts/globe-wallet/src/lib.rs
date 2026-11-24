@@ -2473,6 +2473,8 @@ impl GlobeWallet {
             &user,
             &to,
             &amount,
+            // No decimals hint: amount is already in the token's base units.
+            &None,
         ) {
             Ok(Ok(())) => {
                 emit_event(
@@ -2942,6 +2944,32 @@ mod tests {
         Env, String, BytesN, Address, TryFromVal, Val,
     };
 
+    /// soroban-sdk 22+ hands test events back as XDR (`ContractEvents`);
+    /// convert them to the `(contract, topics, data)` Val tuples the event
+    /// assertions in this module are written against.
+    fn all_events(env: &Env) -> std::vec::Vec<(Address, soroban_sdk::Vec<Val>, Val)> {
+        use soroban_sdk::xdr;
+        env.events()
+            .all()
+            .events()
+            .iter()
+            .filter_map(|e| {
+                let xdr::ContractEventBody::V0(body) = &e.body;
+                let contract = Address::try_from_val(
+                    env,
+                    &xdr::ScVal::Address(xdr::ScAddress::Contract(e.contract_id.clone()?)),
+                )
+                .ok()?;
+                let mut topics = soroban_sdk::Vec::new(env);
+                for t in body.topics.iter() {
+                    topics.push_back(Val::try_from_val(env, t).ok()?);
+                }
+                let data = Val::try_from_val(env, &body.data).ok()?;
+                Some((contract, topics, data))
+            })
+            .collect()
+    }
+
     fn make_code(env: &Env, n: u32) -> String {
         String::from_str(env, &std::format!("A{:02}", n))
     }
@@ -3295,7 +3323,7 @@ mod tests {
         assert_eq!(client.get_spend_limit(&user, &xlm_like), 0);
 
         env.ledger().with_mut(|l| l.sequence_number = 100);
-        wrapper_client.approve(&user, &wallet_id, &usdc, &10_000, &10_000);
+        wrapper_client.approve(&user, &wallet_id, &usdc, &10_000, &10_000, &None);
         client.send(&user, &usdc, &to, &200);
         assert_eq!(
             client.try_send(&user, &usdc, &to, &200),
@@ -3427,8 +3455,8 @@ mod tests {
 
         client.set_spend_limit(&user, &token, &1_000_i128);
         client.cancel_pending_spend_limit(&user, &user, &token);
-        assert!(client.pending_spend_limit(&user, &token).is_none());
         assert!(find_event(&env, "spend_limit_increase_cancelled").is_some());
+        assert!(client.pending_spend_limit(&user, &token).is_none());
 
         client.set_spend_limit(&user, &token, &1_000_i128);
         client.cancel_pending_spend_limit(&guardians.get(0).unwrap(), &user, &token);
@@ -3591,9 +3619,7 @@ mod tests {
         });
         let removed = client.migrate_user_assets(&admin, &user);
         assert_eq!(removed, 10);
-        let migration_events = env
-            .events()
-            .all()
+        let migration_events = all_events(&env)
             .iter()
             .filter(|(_, topics, _)| {
                 topics
@@ -4500,7 +4526,7 @@ mod tests {
     /// `execute_recovery`/`accept_admin` returned `Ok(())`.
     fn find_event(env: &Env, topic_name: &str) -> Option<(soroban_sdk::Vec<Val>, Val)> {
         let target = Symbol::new(env, topic_name);
-        for (_contract_id, topics, data) in env.events().all().iter() {
+        for (_contract_id, topics, data) in all_events(env) {
             if let Some(first) = topics.first() {
                 if let Ok(sym) = Symbol::try_from_val(env, &first) {
                     if sym == target {
@@ -4534,7 +4560,6 @@ mod tests {
         env.ledger().with_mut(|l| l.sequence_number = ready_at);
 
         client.execute_recovery();
-        assert_eq!(client.admin(), new_admin);
 
         // ── admin_transferred: unchanged shape, so existing consumers are
         // never asked to understand a new event just to keep working. ──
@@ -4561,6 +4586,9 @@ mod tests {
         assert_eq!(decoded.threshold, 2);
         assert_eq!(decoded.ready_at, ready_at);
         assert_eq!(decoded.executed_at, ready_at); // executed at the earliest possible ledger
+        // Getter last: soroban-sdk 22+ events().all() only covers the latest
+        // invocation, so any call before find_event would hide these events.
+        assert_eq!(client.admin(), new_admin);
     }
 
     #[test]
@@ -4607,8 +4635,9 @@ mod tests {
         let candidate = Address::generate(&env);
         client.propose_admin(&admin, &candidate);
         client.accept_admin(&candidate);
-        assert_eq!(client.admin(), candidate);
 
+        // soroban-sdk 22+: events().all() only covers the latest invocation,
+        // so check the events before any further (getter) call.
         assert!(
             find_event(&env, "admin_transferred").is_some(),
             "routine transfer must still emit admin_transferred"
@@ -4617,6 +4646,7 @@ mod tests {
             find_event(&env, "recovery_completed").is_none(),
             "routine transfer must never emit recovery_completed"
         );
+        assert_eq!(client.admin(), candidate);
     }
 
     #[test]
@@ -5188,19 +5218,20 @@ mod tests {
         client.set_spend_limit(&user, &token_id, &500_i128);
 
         env.ledger().with_mut(|l| l.sequence_number = 100);
-        wrapper_client.approve(&user, &wallet_id, &token_id, &500, &10_000);
+        wrapper_client.approve(&user, &wallet_id, &token_id, &500, &10_000, &None);
 
         client.send(&user, &token_id, &to, &200);
 
-        assert_eq!(token.balance(&user), 800);
-        assert_eq!(token.balance(&to), 200);
-        assert_eq!(wrapper_client.allowance(&user, &wallet_id, &token_id).amount, 300);
+        // Events first: soroban-sdk 22+ only keeps the latest invocation's.
         let (topics, data) = find_event(&env, "send_executed").expect("send_executed");
         assert_eq!(u32::try_from_val(&env, &topics.get(1).unwrap()).unwrap(), EVENT_VERSION);
         let ev = SendExecutedEvent::try_from_val(&env, &data).unwrap();
         assert_eq!(ev.user, user);
         assert_eq!(ev.token_id, token_id);
         assert_eq!(ev.amount, 200);
+        assert_eq!(token.balance(&user), 800);
+        assert_eq!(token.balance(&to), 200);
+        assert_eq!(wrapper_client.allowance(&user, &wallet_id, &token_id).amount, 300);
     }
 
     #[test]
@@ -5239,7 +5270,7 @@ mod tests {
             create_allowed_token(&env, &client, &admin, &token_admin);
         token_admin_client.mint(&user, &1_000);
         env.ledger().with_mut(|l| l.sequence_number = 100);
-        wrapper_client.approve(&user, &wallet_id, &token_id, &1_000, &10_000);
+        wrapper_client.approve(&user, &wallet_id, &token_id, &1_000, &10_000, &None);
         let to = Address::generate(&env);
         (env, admin, client, user, token_id, to, code, token)
     }
@@ -5253,8 +5284,8 @@ mod tests {
         assert!(!client.is_send_paused());
 
         client.pause_sends(&pauser);
-        assert!(client.is_send_paused());
         assert!(find_event(&env, "sends_paused").is_some());
+        assert!(client.is_send_paused());
 
         assert_eq!(
             client.try_send(&user, &token_id, &to, &100),
@@ -5292,8 +5323,8 @@ mod tests {
         assert!(client.is_send_paused());
 
         client.unpause_sends(&admin);
-        assert!(!client.is_send_paused());
         assert!(find_event(&env, "sends_unpaused").is_some());
+        assert!(!client.is_send_paused());
 
         client.send(&user, &token_id, &to, &100);
         assert_eq!(token.balance(&to), 100);
@@ -5395,7 +5426,7 @@ mod tests {
         client.set_spend_limit(&user, &code_token, &100_i128);
 
         env.ledger().with_mut(|l| l.sequence_number = 100);
-        wrapper_client.approve(&user, &wallet_id, &token_id, &500, &10_000);
+        wrapper_client.approve(&user, &wallet_id, &token_id, &500, &10_000, &None);
 
         assert_eq!(
             client.try_send(&user, &token_id, &to, &200),
@@ -5485,15 +5516,16 @@ mod tests {
         let (env, _wallet_id, admin, client, _wrapper_client) = setup_wiring();
         let (token_id, key) = create_sac(&env, &Address::generate(&env));
         allow_sac(&env, &client, &admin, &token_id, &key);
-        let info = client.allowed_token_info(&token_id).unwrap();
-        assert_eq!(info.token_id, token_id);
-        assert_eq!(info.asset_code, String::from_str(&env, TEST_SAC_CODE));
-        assert_eq!(info.issuer_key, IssuerKey::Key(key));
+        // Events first: soroban-sdk 22+ only keeps the latest invocation's.
         let (topics, data) = find_event(&env, "token_allowed").expect("token_allowed");
         assert_eq!(u32::try_from_val(&env, &topics.get(1).unwrap()).unwrap(), EVENT_VERSION);
         let ev = TokenAllowedEvent::try_from_val(&env, &data).unwrap();
         assert_eq!(ev.token_id, token_id);
         assert_eq!(ev.executed_by, admin);
+        let info = client.allowed_token_info(&token_id).unwrap();
+        assert_eq!(info.token_id, token_id);
+        assert_eq!(info.asset_code, String::from_str(&env, TEST_SAC_CODE));
+        assert_eq!(info.issuer_key, IssuerKey::Key(key));
     }
 
     #[test]
@@ -5719,11 +5751,11 @@ mod tests {
             create_allowed_token(&env, &client, &admin, &Address::generate(&env));
         token_admin_client.mint(&user, &1_000);
         env.ledger().with_mut(|l| l.sequence_number = 100);
-        wrapper_client.approve(&user, &wallet_id, &token_id, &500, &10_000);
+        wrapper_client.approve(&user, &wallet_id, &token_id, &500, &10_000, &None);
 
         client.pause(&pauser);
-        assert!(client.is_paused());
         let (_, data) = find_event(&env, "pause_changed").expect("pause_changed");
+        assert!(client.is_paused());
         assert!(PauseChangedEvent::try_from_val(&env, &data).unwrap().paused);
         assert_eq!(
             client.try_send(&user, &token_id, &to, &100),
@@ -5789,7 +5821,7 @@ mod tests {
         client.add_asset(&user, &xlm(&env));
         client.grant_role(&admin, &Role::Pauser, &user);
         let mut seen = 0;
-        for (_contract_id, topics, _data) in env.events().all().iter() {
+        for (_contract_id, topics, _data) in all_events(&env) {
             assert_eq!(topics.len(), 2, "topics must be (name, version)");
             assert!(Symbol::try_from_val(&env, &topics.get(0).unwrap()).is_ok());
             assert_eq!(u32::try_from_val(&env, &topics.get(1).unwrap()).unwrap(), EVENT_VERSION);
@@ -5949,7 +5981,7 @@ mod tests {
         client.set_spend_limit(&user, &code_token, &1_000_000_i128);
 
         env.ledger().with_mut(|l| l.sequence_number = 100);
-        wrapper_client.approve(&user, &wallet_id, &evil_id, &1_000, &10_000);
+        wrapper_client.approve(&user, &wallet_id, &evil_id, &1_000, &10_000, &None);
 
         // The reentrant callback inside MaliciousToken::transfer must be
         // rejected by the host, which must fail transfer_from's call into

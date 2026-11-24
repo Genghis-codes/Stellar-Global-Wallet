@@ -11,8 +11,11 @@ members = [
 # re-adds it correctly under its own [dev-dependencies]. Enabling it on the
 # base dependency leaks std-only testutils code (rand, serde_json) into the
 # release/wasm32 build, which cannot compile it, breaking every deploy build.
-# Pin to 21.7.7 is currently unreviewed drift. Not yet evaluated for upgrade to 27.x.
-# Requires careful migration testing due to protocol coupling and security-relevant fixes.
+# soroban-sdk 29 (migrated from 21.7.7): wasm builds must go through
+# `stellar contract build` (stellar-cli >= 25.2, wasm32v1-none target) — the
+# SDK's build script refuses a plain `cargo build` for wasm. In tests,
+# `env.events().all()` now returns XDR events covering only the latest
+# invocation (see `all_events` in contracts/globe-wallet/src/lib.rs).
 #
 # Issue #286: the weekly `next-protocol` CI job (.github/workflows/next-protocol.yml)
 # overrides this pin with the next soroban-sdk release to surface protocol
@@ -20,7 +23,8 @@ members = [
 # `sed` override stays a one-line, reviewable change.
 soroban-sdk = { version = "29.0.1" }
 
-# `soroban-env-host` 21.2.1 — a transitive dependency of `soroban-sdk`
+# History (kept because the patch below still applies): under soroban-sdk
+# 21.7.7, `soroban-env-host` 21.2.1 — a transitive dependency of `soroban-sdk`
 # 21.7.7 via `soroban-ledger-snapshot`, pulled in only under the
 # `testutils` feature each contract's [dev-dependencies] enables — declares
 # its own `ed25519-dalek` requirement as `">=2.0.0"`, with no upper bound.

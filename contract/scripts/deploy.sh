@@ -78,7 +78,7 @@ GIT_SHA="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || echo "unknown")"
 DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 mkdir -p "$CONTRACT_DIR/deployments"
-TARGET_DIR="$CONTRACT_DIR/target/wasm32-unknown-unknown/release"
+TARGET_DIR="$CONTRACT_DIR/target/wasm32v1-none/release"
 
 GLOBE_WALLET_WASM="$TARGET_DIR/globe_wallet.wasm"
 TOKEN_WRAPPER_WASM="$TARGET_DIR/token_wrapper.wasm"
@@ -113,7 +113,8 @@ else
   fi
 
   echo "==> Building contracts (release)"
-  cargo build --manifest-path "$CONTRACT_DIR/Cargo.toml" --target wasm32-unknown-unknown --release --workspace
+  # soroban-sdk >= 25 must be built by stellar-cli (>= 25.2), not plain cargo.
+  "$CLI" contract build --manifest-path "$CONTRACT_DIR/Cargo.toml"
 
   IDENTITY="${IDENTITY:-deployer-${NETWORK}}"
   if ! "$CLI" keys address "$IDENTITY" >/dev/null 2>&1; then
