@@ -207,7 +207,7 @@ export class TransactionSubmitter {
    * Submit a transaction with polling for final status.
    */
   async submitWithStatus(tx: StellarSdk.Transaction): Promise<TransactionRecord> {
-    const hash = tx.hash().toString("hex");
+    const hash = Buffer.from(tx.hash()).toString("hex");
     const sourceAccount = tx.source;
 
     // Create initial record

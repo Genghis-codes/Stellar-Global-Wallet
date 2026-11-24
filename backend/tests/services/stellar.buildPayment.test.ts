@@ -96,7 +96,7 @@ describe("StellarService.buildPayment (issue #1)", () => {
     const op = tx.operations[0] as StellarSdk.Operation.Payment;
     expect(op.asset.getCode()).toBe("USDC");
     expect(op.asset.getIssuer()).toBe(issuer);
-    expect(tx.memo.value?.toString()).toBe("invoice 42");
+    expect(Buffer.from(tx.memo.value as Uint8Array).toString("utf8")).toBe("invoice 42");
   });
 
   it("treats XLM and native as the native asset", async () => {
@@ -171,7 +171,7 @@ describe("StellarService.buildPayment (issue #1)", () => {
         memo: "deposit-77",
       });
 
-      expect(decode(built.xdr).memo.value?.toString()).toBe("deposit-77");
+      expect(Buffer.from(decode(built.xdr).memo.value as Uint8Array).toString("utf8")).toBe("deposit-77");
     });
   });
 

@@ -33,11 +33,11 @@ describe("StellarService.submitSigned (issue #2)", () => {
 
   it("submits a locally signed envelope as-is and returns hash, ledger and successful", async () => {
     const { xdr, tx } = signedPayment();
-    const submit = mockSubmit({ hash: tx.hash().toString("hex"), ledger: 321, successful: true });
+    const submit = mockSubmit({ hash: Buffer.from(tx.hash()).toString("hex"), ledger: 321, successful: true });
 
     const result = await new StellarService().submitSigned({ signedXdr: xdr });
 
-    expect(result).toEqual({ hash: tx.hash().toString("hex"), ledger: 321, successful: true });
+    expect(result).toEqual({ hash: Buffer.from(tx.hash()).toString("hex"), ledger: 321, successful: true });
     const sent = submit.mock.calls[0][0] as StellarSdk.Transaction;
     // Never re-signed or rebuilt: the envelope is exactly what the client signed.
     expect(sent.toXDR()).toBe(xdr);

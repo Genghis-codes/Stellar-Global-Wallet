@@ -74,7 +74,7 @@ export function createPendingTxRouter(
     const tx = parseClassicTransaction(row.xdr, networkPassphrase);
     return {
       ...row,
-      hash: tx.hash().toString("hex"),
+      hash: Buffer.from(tx.hash()).toString("hex"),
       collectedWeight: weightOf(row.collectedSigners, account),
     };
   }

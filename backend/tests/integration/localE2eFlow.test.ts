@@ -189,7 +189,7 @@ function startLocalFakeStellarNode(state: FakeLedgerState, fallbackAccount: stri
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
-            hash: tx.hash().toString("hex"),
+            hash: Buffer.from(tx.hash()).toString("hex"),
             ledger: ++state.latestLedger,
             successful: true,
           })
@@ -219,21 +219,22 @@ function startLocalFakeStellarNode(state: FakeLedgerState, fallbackAccount: stri
           const keys = (rpcReq.params?.keys as string[]) ?? [];
           const entries = keys.flatMap((keyB64) => {
             const lk = StellarSdk.xdr.LedgerKey.fromXDR(keyB64, "base64");
-            if (lk.switch().name === "account") {
-              const pk = StellarSdk.StrKey.encodeEd25519PublicKey(lk.account().accountId().ed25519());
+            // stellar-sdk 17 XDR: union arms and struct fields are properties.
+            if (lk.type === "account" && lk.account.accountId.type === "publicKeyTypeEd25519") {
+              const pk = StellarSdk.StrKey.encodeEd25519PublicKey(lk.account.accountId.ed25519.value);
               const acct = state.accounts.get(pk);
               if (!acct) return [];
               const accountEntry = new StellarSdk.xdr.AccountEntry({
                 accountId: StellarSdk.Keypair.fromPublicKey(pk).xdrAccountId(),
-                balance: StellarSdk.xdr.Int64.fromString("100000000000"),
-                seqNum: StellarSdk.xdr.Int64.fromString(acct.sequence.toString()),
+                balance: 100000000000n,
+                seqNum: acct.sequence,
                 numSubEntries: 0,
                 inflationDest: null,
                 flags: 0,
                 homeDomain: "",
                 thresholds: Buffer.from([1, 1, 1, 1]),
                 signers: [],
-                ext: new StellarSdk.xdr.AccountEntryExt(0),
+                ext: StellarSdk.xdr.AccountEntryExt.v0(),
               });
               const ledgerEntryData = StellarSdk.xdr.LedgerEntryData.account(accountEntry);
               return [
@@ -254,9 +255,10 @@ function startLocalFakeStellarNode(state: FakeLedgerState, fallbackAccount: stri
           const txB64 = String(rpcReq.params?.transaction ?? "");
           const tx = StellarSdk.TransactionBuilder.fromXDR(txB64, PASSPHRASE) as StellarSdk.Transaction;
           const op = tx.operations[0] as StellarSdk.Operation.InvokeHostFunction;
-          const invoke = op.func.invokeContract();
-          const fnName = invoke.functionName().toString();
-          const args = invoke.args();
+          if (op.func.type !== "hostFunctionTypeInvokeContract") throw new Error("expected an invokeContract host function");
+          const invoke = op.func.invokeContract;
+          const fnName = invoke.functionName.toString();
+          const args = invoke.args;
 
           if (fnName === "record_spend") {
             const amount = BigInt(StellarSdk.scValToNative(args[2]));
@@ -297,9 +299,10 @@ function startLocalFakeStellarNode(state: FakeLedgerState, fallbackAccount: stri
           const tx = StellarSdk.TransactionBuilder.fromXDR(txB64, PASSPHRASE) as StellarSdk.Transaction;
           state.sorobanSubmissions += 1;
           const op = tx.operations[0] as StellarSdk.Operation.InvokeHostFunction;
-          const invoke = op.func.invokeContract();
-          const fnName = invoke.functionName().toString();
-          const args = invoke.args();
+          if (op.func.type !== "hostFunctionTypeInvokeContract") throw new Error("expected an invokeContract host function");
+          const invoke = op.func.invokeContract;
+          const fnName = invoke.functionName.toString();
+          const args = invoke.args;
           if (fnName === "record_spend") {
             state.spentStroops += BigInt(StellarSdk.scValToNative(args[2]));
           } else if (fnName === "initiate_recovery") {
@@ -315,7 +318,7 @@ function startLocalFakeStellarNode(state: FakeLedgerState, fallbackAccount: stri
           if (src) src.sequence += 1n;
           reply({
             status: "PENDING",
-            hash: tx.hash().toString("hex"),
+            hash: Buffer.from(tx.hash()).toString("hex"),
             latestLedger: ++state.latestLedger,
           });
           return;

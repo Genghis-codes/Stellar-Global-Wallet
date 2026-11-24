@@ -33,9 +33,12 @@ describe("userLedgerKeys", () => {
   it("builds UserAssets plus SpendLimit/LimitOptIn keys per asset", () => {
     const keys = userLedgerKeys(CONTRACT_ID, USER, ["XLM", "USDC"]);
     expect(keys).toHaveLength(5);
-    const first = keys[0].contractData();
-    expect(first.durability()).toEqual(StellarSdk.xdr.ContractDataDurability.persistent());
-    expect(StellarSdk.scValToNative(first.key())).toEqual(["UserAssets", USER]);
+    // stellar-sdk 17 XDR: union arms and struct fields are properties.
+    const key = keys[0];
+    if (key.type !== "contractData") throw new Error(`expected a contractData key, got ${key.type}`);
+    const first = key.contractData;
+    expect(first.durability).toBe(StellarSdk.xdr.ContractDataDurability.persistent);
+    expect(StellarSdk.scValToNative(first.key)).toEqual(["UserAssets", USER]);
   });
 });
 
