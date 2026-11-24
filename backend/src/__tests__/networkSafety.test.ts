@@ -67,7 +67,7 @@ describe("Multi-Network Safety (#223)", () => {
     const testnetXdr = testnetTx.toXDR();
 
     const parsed = parseSignedTransaction(testnetXdr, KNOWN_PASSPHRASES.testnet);
-    expect(parsed.hash).toBe(testnetTx.hash().toString("hex"));
+    expect(parsed.hash).toBe(Buffer.from(testnetTx.hash()).toString("hex"));
     expect(parsed.sourcePublicKey).toBe(keypair.publicKey());
   });
 });

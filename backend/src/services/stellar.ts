@@ -1561,7 +1561,7 @@ export class StellarService {
 
       return {
         xdr: tx.toXDR(),
-        hash: tx.hash().toString("hex"),
+        hash: Buffer.from(tx.hash()).toString("hex"),
         operationType,
       };
     });
