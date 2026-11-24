@@ -18,7 +18,7 @@ members = [
 # overrides this pin with the next soroban-sdk release to surface protocol
 # breakage early. Keep the version string on its own line so the job's
 # `sed` override stays a one-line, reviewable change.
-soroban-sdk = { version = "21.7.7" }
+soroban-sdk = { version = "29.0.1" }
 
 # `soroban-env-host` 21.2.1 — a transitive dependency of `soroban-sdk`
 # 21.7.7 via `soroban-ledger-snapshot`, pulled in only under the
