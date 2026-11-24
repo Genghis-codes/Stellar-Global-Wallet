@@ -143,7 +143,7 @@ describe("StellarService path payment builders (issue #3)", () => {
         memo: "swap-1",
       });
 
-      expect(decode(built.xdr).memo.value?.toString()).toBe("swap-1");
+      expect(Buffer.from(decode(built.xdr).memo.value as Uint8Array).toString("utf8")).toBe("swap-1");
     });
   });
 

@@ -50,7 +50,8 @@ export function canonicalJson(value: unknown): string {
 export function signManifest<T>(manifest: T, secretKey: string): SignedManifest<T> {
   const keypair = Keypair.fromSecret(secretKey);
   const signature = keypair.sign(Buffer.from(canonicalJson(manifest), "utf8"));
-  return { manifest, publicKey: keypair.publicKey(), signature: signature.toString("base64") };
+  // stellar-sdk 17 returns a Uint8Array (not a Buffer) from Keypair#sign.
+  return { manifest, publicKey: keypair.publicKey(), signature: Buffer.from(signature).toString("base64") };
 }
 
 /**

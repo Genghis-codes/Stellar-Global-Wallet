@@ -96,11 +96,11 @@ function innerTransaction(tx: AnyTransaction): StellarSdk.Transaction {
 export function assertSignedForThisNetwork(tx: AnyTransaction, signerAddress: string): void {
   const signer = StellarSdk.Keypair.fromPublicKey(baseAccountId(signerAddress));
   const hint = Buffer.from(signer.signatureHint());
-  const candidates = tx.signatures.filter((sig) => Buffer.from(sig.hint()).equals(hint));
+  const candidates = tx.signatures.filter((sig) => Buffer.from(sig.hint.value).equals(hint));
   if (candidates.length === 0) return;
 
   const hash = tx.hash();
-  if (!candidates.some((sig) => signer.verify(hash, sig.signature()))) {
+  if (!candidates.some((sig) => signer.verify(hash, sig.signature))) {
     throw new InvalidTransactionError(
       "The signature does not verify for this network. The transaction was signed for a different " +
         "network passphrase than the one this API uses.",
@@ -148,7 +148,7 @@ export function parseSignedTransaction(signedXdr: string, networkPassphrase: str
 
   return {
     transaction,
-    hash: transaction.hash().toString("hex"),
+    hash: Buffer.from(transaction.hash()).toString("hex"),
     sourcePublicKey: baseAccountId(inner.source),
   };
 }
@@ -221,19 +221,30 @@ export interface TransactionPreview {
  */
 export const KNOWN_CONTRACT_IDS: ReadonlySet<string> = new Set<string>();
 
-function assetLabel(asset: StellarSdk.Asset): string {
+function assetLabel(asset: StellarSdk.Asset | StellarSdk.LiquidityPoolAsset): string {
+  if (asset instanceof StellarSdk.LiquidityPoolAsset) return `pool:${asset.toString()}`;
   return asset.isNative() ? "XLM" : `${asset.getCode()}:${asset.getIssuer()}`;
 }
 
-function decodeOperation(op: StellarSdk.xdr.Operation, knownContracts: ReadonlySet<string>): TransactionIntent {
-  const body = op.body();
-  const type = body.switch().name;
+/**
+ * Raw bytes of a signer-key value from a decoded setOptions operation
+ * (strings pass through; stellar-sdk 17 hands binary keys back as
+ * Uint8Array, rendered here as hex).
+ */
+function signerKeyLabel(value: Uint8Array | string | undefined): string {
+  if (value === undefined) return "";
+  return typeof value === "string" ? value : Buffer.from(value).toString("hex");
+}
 
-  if (type === "payment") {
-    const payment = body.paymentOp();
-    const asset = StellarSdk.Asset.fromOperation(op).asset;
-    const amount = StellarSdk.Operation.fromXDRObject(op).amount ?? "0";
-    const destination = StellarSdk.StrKey.encodeEd25519PublicKey(payment.destination().ed25519());
+/**
+ * Decodes one already-parsed operation (`Transaction#operations` yields
+ * `OperationRecord`s, not raw `xdr.Operation`s) into a human-readable intent.
+ */
+function decodeOperation(op: StellarSdk.OperationRecord, knownContracts: ReadonlySet<string>): TransactionIntent {
+  const type = op.type;
+
+  if (op.type === "payment") {
+    const { destination, amount, asset } = op;
     return {
       kind: "payment",
       summary: `Send ${amount} ${assetLabel(asset)} to ${destination}`,
@@ -242,10 +253,8 @@ function decodeOperation(op: StellarSdk.xdr.Operation, knownContracts: ReadonlyS
     };
   }
 
-  if (type === "createAccount") {
-    const create = body.createAccountOp();
-    const destination = StellarSdk.StrKey.encodeEd25519PublicKey(create.destination().ed25519());
-    const startingBalance = StellarSdk.Operation.fromXDRObject(op).startingBalance ?? "0";
+  if (op.type === "createAccount") {
+    const { destination, startingBalance } = op;
     return {
       kind: "createAccount",
       summary: `Create account ${destination} with ${startingBalance} XLM`,
@@ -254,8 +263,8 @@ function decodeOperation(op: StellarSdk.xdr.Operation, knownContracts: ReadonlyS
     };
   }
 
-  if (type === "accountMerge") {
-    const destination = StellarSdk.StrKey.encodeEd25519PublicKey(body.destination().ed25519());
+  if (op.type === "accountMerge") {
+    const { destination } = op;
     return {
       kind: "accountMerge",
       summary: `Merge this account into ${destination}`,
@@ -264,11 +273,9 @@ function decodeOperation(op: StellarSdk.xdr.Operation, knownContracts: ReadonlyS
     };
   }
 
-  if (type === "changeTrust") {
-    const change = body.changeTrustOp();
-    const asset = StellarSdk.Asset.fromOperation(op).line;
-    const limit = StellarSdk.Operation.fromXDRObject(op).limit ?? "0";
-    const label = assetLabel(asset);
+  if (op.type === "changeTrust") {
+    const label = assetLabel(op.line);
+    const limit = op.limit ?? "0";
     return {
       kind: "trustline",
       summary: limit === "0" ? `Remove trustline for ${label}` : `Trust ${label} up to ${limit}`,
@@ -277,40 +284,39 @@ function decodeOperation(op: StellarSdk.xdr.Operation, knownContracts: ReadonlyS
     };
   }
 
-  if (type === "setOptions") {
-    const setOptions = StellarSdk.Operation.fromXDRObject(op);
+  if (op.type === "setOptions") {
     const details: Record<string, string> = {};
-    if (setOptions.signer) {
-      details.signerKey = setOptions.signer.ed25519PublicKey ?? setOptions.signer.preAuthTx ?? "";
-      details.signerWeight = String(setOptions.signer.weight);
+    const signer = op.signer;
+    if (signer) {
+      details.signerKey = signer.ed25519PublicKey ?? signerKeyLabel(signer.preAuthTx);
+      details.signerWeight = String(signer.weight);
     }
-    if (setOptions.masterWeight !== undefined) details.masterWeight = String(setOptions.masterWeight);
-    if (setOptions.lowThreshold !== undefined) details.lowThreshold = String(setOptions.lowThreshold);
-    if (setOptions.medThreshold !== undefined) details.medThreshold = String(setOptions.medThreshold);
-    if (setOptions.highThreshold !== undefined) details.highThreshold = String(setOptions.highThreshold);
+    if (op.masterWeight !== undefined) details.masterWeight = String(op.masterWeight);
+    if (op.lowThreshold !== undefined) details.lowThreshold = String(op.lowThreshold);
+    if (op.medThreshold !== undefined) details.medThreshold = String(op.medThreshold);
+    if (op.highThreshold !== undefined) details.highThreshold = String(op.highThreshold);
     const risks: TransactionRisk[] = [];
-    if (setOptions.signer || setOptions.masterWeight !== undefined) {
+    if (signer || op.masterWeight !== undefined) {
       risks.push({ code: "SIGNER_CHANGE", message: "This operation changes who can sign for the account." });
     }
     return {
       kind: "signerChange",
-      summary: setOptions.signer ? `Add or update signer ${details.signerKey}` : "Change account signing options",
+      summary: signer ? `Add or update signer ${details.signerKey}` : "Change account signing options",
       details,
       risks,
     };
   }
 
-  if (type === "invokeHostFunction") {
-    const invoke = body.invokeHostFunctionOp();
-    const hostFunction = invoke.hostFunction();
-    const fnType = hostFunction.switch().name;
+  if (op.type === "invokeHostFunction") {
+    const hostFunction = op.func;
+    const fnType = hostFunction.type;
     const details: Record<string, string> = { hostFunction: fnType };
     const risks: TransactionRisk[] = [];
 
-    if (fnType === "hostFunctionTypeInvokeContract") {
-      const invocation = hostFunction.invokeContract();
-      const contractId = StellarSdk.StrKey.encodeContract(invocation.contractAddress().contractId());
-      const functionName = invocation.functionName().toString();
+    if (hostFunction.type === "hostFunctionTypeInvokeContract") {
+      const invocation = hostFunction.invokeContract;
+      const contractId = StellarSdk.Address.fromScAddress(invocation.contractAddress).toString();
+      const functionName = invocation.functionName.toString();
       details.contractId = contractId;
       details.function = functionName;
       if (!knownContracts.has(contractId)) {
@@ -379,7 +385,7 @@ export function previewTransaction(
   }
 
   return {
-    hash: transaction.hash().toString("hex"),
+    hash: Buffer.from(transaction.hash()).toString("hex"),
     sourcePublicKey: baseAccountId(inner.source),
     fee: inner.fee,
     intents,

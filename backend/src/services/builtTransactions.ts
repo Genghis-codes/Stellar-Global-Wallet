@@ -169,7 +169,7 @@ export class BuiltTransactionRegistry {
   async record(tx: StellarSdk.Transaction, intent: BuildIntent): Promise<BuiltTransactionRecord> {
     const maxTime = tx.timeBounds?.maxTime ?? "0";
     const record: BuiltTransactionRecord = {
-      hash: tx.hash().toString("hex"),
+      hash: Buffer.from(tx.hash()).toString("hex"),
       account: tx.source,
       sequence: tx.sequence,
       networkPassphrase: this.networkPassphrase,
@@ -189,7 +189,7 @@ export class BuiltTransactionRegistry {
    */
   async verify(parsed: ParsedSignedTransaction): Promise<BuiltTransactionRecord> {
     const tx = inner(parsed.transaction);
-    const hash = tx.hash().toString("hex");
+    const hash = Buffer.from(tx.hash()).toString("hex");
     const record = await this.store.get(hash);
 
     if (record) {

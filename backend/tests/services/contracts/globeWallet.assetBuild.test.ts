@@ -5,6 +5,12 @@ import { SorobanService } from "../../../src/services/soroban";
 const USER = StellarSdk.Keypair.random().publicKey();
 const ISSUER = StellarSdk.Keypair.random().publicKey();
 
+/** Entries of an scvMap ScVal (stellar-sdk 17: union arms are properties). */
+function mapEntries(val: StellarSdk.xdr.ScVal): StellarSdk.xdr.ScMapEntry[] {
+  if (val.type !== "scvMap") throw new Error(`expected an scvMap, got ${val.type}`);
+  return val.map ?? [];
+}
+
 describe("GlobeWalletContract asset builders (#8)", () => {
   afterEach(() => jest.restoreAllMocks());
 
@@ -25,10 +31,10 @@ describe("GlobeWalletContract asset builders (#8)", () => {
     expect(call.method).toBe("add_asset");
     expect(call.sourcePublicKey).toBe(USER);
     expect(StellarSdk.scValToNative(call.args[0])).toBe(USER);
-    const entries = call.args[1].map() ?? [];
-    expect(entries.map((entry) => entry.key().sym())).toEqual(["code", "issuer"]);
-    expect(StellarSdk.scValToNative(entries[0].val())).toBe("USDC");
-    expect(StellarSdk.scValToNative(entries[1].val())).toBe(ISSUER);
+    const entries = mapEntries(call.args[1]);
+    expect(entries.map((entry) => StellarSdk.scValToNative(entry.key))).toEqual(["code", "issuer"]);
+    expect(StellarSdk.scValToNative(entries[0].val)).toBe("USDC");
+    expect(StellarSdk.scValToNative(entries[1].val)).toBe(ISSUER);
   });
 
   it("encodes native XLM with a void issuer", async () => {
@@ -44,10 +50,10 @@ describe("GlobeWalletContract asset builders (#8)", () => {
     });
 
     const assetInfo = buildUnsignedTransaction.mock.calls[0][0].args[1];
-    const entries = assetInfo.map() ?? [];
-    expect(entries[0].key().sym()).toBe("code");
-    expect(entries[1].key().sym()).toBe("issuer");
-    expect(entries[1].val().switch().name).toBe("scvVoid");
+    const entries = mapEntries(assetInfo);
+    expect(StellarSdk.scValToNative(entries[0].key)).toBe("code");
+    expect(StellarSdk.scValToNative(entries[1].key)).toBe("issuer");
+    expect(entries[1].val.type).toBe("scvVoid");
   });
 
   it("rejects an asset that is already registered, case-insensitively", async () => {

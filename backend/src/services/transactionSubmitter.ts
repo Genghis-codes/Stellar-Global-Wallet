@@ -196,7 +196,7 @@ export class TransactionSubmitter {
       throw new Error("Invalid transaction XDR");
     }
 
-    const hash = transaction.hash().toString("hex");
+    const hash = Buffer.from(transaction.hash()).toString("hex");
     const innerTx = "innerTransaction" in transaction ? transaction.innerTransaction : transaction;
     const sourcePublicKey = baseAccountId(innerTx.source);
 
@@ -265,7 +265,7 @@ export class TransactionSubmitter {
         const tx = builder.build();
         tx.sign(sourceKeypair);
 
-        const hash = tx.hash().toString("hex");
+        const hash = Buffer.from(tx.hash()).toString("hex");
         await this.statusStore?.record(hash, sourcePublicKey);
 
         try {
