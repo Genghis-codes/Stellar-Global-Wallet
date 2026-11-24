@@ -337,7 +337,7 @@ describe("TransactionSubmitter", () => {
 
       const submitMock = jest.spyOn((horizonService as any).server, "submitTransaction");
       submitMock.mockResolvedValue({
-        hash: tx.hash().toString("hex"),
+        hash: Buffer.from(tx.hash()).toString("hex"),
         ledger: 12349,
         successful: true,
       });
@@ -345,7 +345,7 @@ describe("TransactionSubmitter", () => {
       const result = await submitter.submitSigned({ signedXdr: tx.toXDR() });
 
       expect(result).toEqual({
-        hash: tx.hash().toString("hex"),
+        hash: Buffer.from(tx.hash()).toString("hex"),
         ledger: 12349,
         successful: true,
       });

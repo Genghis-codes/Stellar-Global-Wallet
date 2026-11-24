@@ -262,7 +262,7 @@ export class SorobanService {
     await clearPendingTransaction(sourcePublicKey);
 
     // #287 — record estimate vs actual resource fee for accuracy tracking.
-    this.recordFeeAccuracy(assembled.hash().toString("hex"), estimatedResourceFee, final);
+    this.recordFeeAccuracy(Buffer.from(assembled.hash()).toString("hex"), estimatedResourceFee, final);
 
     return {
       result: this.parseTransactionResult<T>(final),

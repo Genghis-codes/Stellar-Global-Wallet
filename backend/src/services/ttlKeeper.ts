@@ -35,7 +35,7 @@ function persistentKey(contractId: string, key: StellarSdk.xdr.ScVal): StellarSd
     new StellarSdk.xdr.LedgerKeyContractData({
       contract: new StellarSdk.Address(contractId).toScAddress(),
       key,
-      durability: StellarSdk.xdr.ContractDataDurability.persistent(),
+      durability: StellarSdk.xdr.ContractDataDurability.persistent,
     })
   );
 }

@@ -30,14 +30,14 @@ export function signedPayment(options: SignedPaymentOptions = {}) {
 
   const tx = builder.build();
   if (!options.unsigned) tx.sign(keypair);
-  return { keypair, tx, xdr: tx.toXDR(), hash: tx.hash().toString("hex") };
+  return { keypair, tx, xdr: tx.toXDR(), hash: Buffer.from(tx.hash()).toString("hex") };
 }
 
 /** Wraps a signed transaction in a fee-bump envelope signed by `feePayer`. */
 export function feeBumped(inner: StellarSdk.Transaction, feePayer: StellarSdk.Keypair, passphrase = TEST_PASSPHRASE) {
   const bump = StellarSdk.TransactionBuilder.buildFeeBumpTransaction(feePayer.publicKey(), "200", inner, passphrase);
   bump.sign(feePayer);
-  return { tx: bump, xdr: bump.toXDR(), hash: bump.hash().toString("hex") };
+  return { tx: bump, xdr: bump.toXDR(), hash: Buffer.from(bump.hash()).toString("hex") };
 }
 
 /** The error Horizon's SDK throws when a submission is rejected with result codes. */

@@ -72,7 +72,7 @@ export function verifiedSigners(tx: Transaction, account: AccountSigners): strin
     const kp = Keypair.fromPublicKey(signer.key);
     const hint = kp.signatureHint();
     const signed = tx.signatures.some(
-      (sig) => sig.hint().equals(hint) && kp.verify(hash, sig.signature())
+      (sig) => Buffer.from(sig.hint.value).equals(Buffer.from(hint)) && kp.verify(hash, sig.signature)
     );
     if (signed) found.push(signer.key);
   }
@@ -87,7 +87,7 @@ export function weightOf(signers: string[], account: AccountSigners): number {
 
 /** Add `incoming`'s signatures to `base` (same transaction hash required). */
 export function mergeSignatures(base: Transaction, incoming: Transaction): Transaction {
-  if (!base.hash().equals(incoming.hash())) {
+  if (!Buffer.from(base.hash()).equals(Buffer.from(incoming.hash()))) {
     throw new AppError("Signed transaction does not match the pending transaction", {
       code: "INVALID_TRANSACTION",
       status: 409,
