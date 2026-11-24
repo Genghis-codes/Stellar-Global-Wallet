@@ -1,38 +1,44 @@
 {
-  "name": "@stellar-global-wallet/sdk",
+  "name": "@globe-wallet/sdk",
   "version": "0.1.0",
-  "description": "SDK for Stellar Global Wallet",
+  "description": "Typed client for the GlobeWallet API and Soroban contracts. Works in Node, browsers and React Native.",
+  "license": "MIT",
+  "type": "module",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Genghis-codes/Stellar-Global-Wallet.git",
+    "directory": "packages/sdk"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "jest",
-    "test:ledger": "jest --testPathPattern ledger"
+    "build": "tsc",
+    "type-check": "tsc --noEmit",
+    "test": "node --test --import tsx tests/validate.test.ts tests/format.test.ts tests/lookalike.test.ts tests/manifest.test.ts tests/client.test.ts",
+    "test:smoke": "node --test --import tsx tests/smoke/preview-api.test.ts"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^12.0.0"
+    "@globe-wallet/bindings-globe-wallet": "^0.0.0",
+    "@stellar/stellar-sdk": "^16.0.1"
   },
   "devDependencies": {
-    "@ledgerhq/hw-transport-node-speculos": "^6.29.0",
-    "@types/jest": "^29.5.0",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.1.0",
-    "typescript": "^5.4.0"
-  },
-  "peerDependencies": {
-    "@ledgerhq/hw-transport-webhid": "^6.29.0",
-    "@ledgerhq/hw-transport-web-ble": "^6.29.0"
-  },
-  "peerDependenciesMeta": {
-    "@ledgerhq/hw-transport-webhid": {
-      "optional": true
-    },
-    "@ledgerhq/hw-transport-web-ble": {
-      "optional": true
-    }
+    "tsx": "^4.7.1",
+    "typescript": "^5.6.0"
   }
 }
