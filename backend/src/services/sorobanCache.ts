@@ -281,10 +281,11 @@ export async function bustContractCache(contractId: string): Promise<void> {
   try {
     const client = await ensureConnected();
     const pattern = `${KEY_PREFIX}${contractId}:*`;
-    let cursor = 0;
+    // node-redis >= 5 SCAN takes and returns the cursor as a string
+    // ("0" starts and ends the iteration) and returns { cursor, keys }.
+    let cursor = "0";
     let busted = 0;
     do {
-      // redis v4 SCAN returns { cursor, keys }
       const reply = await (client as unknown as RedisClientType).scan(cursor, {
         MATCH: pattern,
         COUNT: 100,
@@ -294,7 +295,7 @@ export async function bustContractCache(contractId: string): Promise<void> {
         await (client as unknown as RedisClientType).del(reply.keys);
         busted += reply.keys.length;
       }
-    } while (cursor !== 0);
+    } while (cursor !== "0");
     console.log(`[soroban-cache] busted ${busted} key(s) for contract ${contractId}`);
     // Broadcast to other instances
     await broadcastInvalidation(contractId);
