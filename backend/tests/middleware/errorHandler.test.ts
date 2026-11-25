@@ -161,7 +161,7 @@ describe("errorHandler", () => {
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({
       error: {
-        message: "something else broke",
+        message: "Internal server error",
         code: "INTERNAL_ERROR",
       },
     });
@@ -174,7 +174,7 @@ describe("errorHandler", () => {
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith({
       error: {
-        message: "Not Found",
+        message: "Internal server error",
         code: "INTERNAL_ERROR",
       },
     });

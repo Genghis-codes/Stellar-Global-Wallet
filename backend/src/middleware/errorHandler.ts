@@ -63,7 +63,10 @@ function toAppError(error: unknown): AppError {
       const code = isErrorCode(derived) ? derived : "REQUEST_ERROR";
       return new AppError(error.message, { code, status });
     }
-    return new InternalServerError(error.message);
+    // Unexpected errors (driver/library/bug) can carry SQL fragments, hostnames
+    // or file paths; log them server-side (errorHandler does) but never echo
+    // the raw message to the client.
+    return new InternalServerError();
   }
 
   return new InternalServerError();
