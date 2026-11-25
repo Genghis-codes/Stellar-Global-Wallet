@@ -56,3 +56,58 @@ jobs:
         # via jest-openapi (see backend/tests/env.setup.ts), so this step
         # fails CI when a route and the OpenAPI spec drift apart.
         run: npm test --workspace backend
+
+  migrations:
+    # Applies every schema migration to an empty Postgres, re-runs them (must
+    # be a no-op), rolls them all back and applies them again, so a broken,
+    # non-idempotent or mis-ordered migration fails CI instead of a deploy.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: globewallet
+          POSTGRES_PASSWORD: globewallet
+          POSTGRES_DB: migrations_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U globewallet"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://globewallet:globewallet@localhost:5432/migrations_ci
+      NODE_ENV: test
+      HORIZON_URL: https://horizon-testnet.stellar.org
+      NETWORK_PASSPHRASE: Test SDF Network ; September 2015
+      CORS_ORIGIN: http://localhost:3000
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-secret-that-is-long-enough-for-hs256
+      API_KEY: ci-api-key
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build workspace packages the backend imports
+        run: |
+          npm run build --workspace packages/bindings/globe-wallet
+          npm run build --workspace packages/sdk
+
+      - name: Apply migrations to an empty database
+        working-directory: backend
+        run: |
+          npm run migrate
+          npm run migrate
+          npm run migrate:down
+          npm run migrate
