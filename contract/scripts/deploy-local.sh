@@ -10,7 +10,7 @@ NETWORK="${NETWORK:-local}"
 RPC_URL="${RPC_URL:-http://localhost:8000/soroban/rpc}"
 NETWORK_PASSPHRASE="${NETWORK_PASSPHRASE:-Standalone Network ; February 2017}"
 ADMIN_SECRET="${ADMIN_SECRET:-${STELLAR_SECRET_KEY:-}}"
-WASM="${WASM:-target/wasm32-unknown-unknown/release/globe_wallet.wasm}"
+WASM="${WASM:-target/wasm32v1-none/release/globe_wallet.wasm}"
 
 if [[ -z "$ADMIN_SECRET" ]]; then
   echo "error: ADMIN_SECRET (or STELLAR_SECRET_KEY) must be set" >&2
@@ -18,7 +18,7 @@ if [[ -z "$ADMIN_SECRET" ]]; then
 fi
 
 if [[ ! -f "$WASM" ]]; then
-  echo "error: wasm not found at $WASM (run: cargo build --target wasm32-unknown-unknown --release)" >&2
+  echo "error: wasm not found at $WASM (run: stellar contract build)" >&2
   exit 1
 fi
 

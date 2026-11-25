@@ -112,7 +112,11 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32v1-none
+
+      # soroban-sdk >= 25 can only be built for wasm by stellar-cli >= 25.2.
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --version 27.0.0
 
       - name: Build and report WASM sizes
         run: ./scripts/wasm-size.sh

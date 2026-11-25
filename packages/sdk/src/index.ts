@@ -111,10 +111,40 @@ export {
 export type { ApiClientOptions, AuthTokens, RequestOptions, TokenStore } from "./client.js";
 
 /**
- * Key management abstraction (#295): sign transactions and Soroban auth
- * entries without exporting private keys. Includes WebCrypto/IndexedDB
- * (non-extractable), Expo SecureStore, and hardware wallet adapters plus
- * biometric gating hooks.
+ * Account closure (#288): typed request/plan shapes and helpers for the
+ * backend's close-account builder (cancel offers, convert/send balances,
+ * remove trustlines/signers/data, merge) and its dry-run simulation.
  */
-export * from "./keystore/index.js";
+export {
+  buildCloseAccount,
+  CloseAccountError,
+  isCloseAccountError,
+} from "./closeAccount/index.js";
+export type {
+  CloseAccountRequest,
+  CloseAccountPlan,
+  CloseAccountSimulation,
+  CloseAccountStep,
+  CloseAccountStepKind,
+} from "./closeAccount/index.js";
+
+/**
+ * Claimable balances (#289): list shapes with evaluated predicates
+ * (claimable now/after/before) and builders for claim (creating the
+ * trustline when needed) and reclaim.
+ */
+export {
+  buildClaimClaimableBalance,
+  buildReclaimClaimableBalance,
+  ClaimableBalanceError,
+  evaluateClaimableBalancePredicate,
+  isClaimableBalanceError,
+} from "./claimableBalances/index.js";
+export type {
+  ClaimableBalance,
+  ClaimableBalanceClaimRequest,
+  ClaimableBalanceReclaimRequest,
+  ClaimableBalanceState,
+  ClaimableBalancePredicateEvaluation,
+} from "./claimableBalances/index.js";
 

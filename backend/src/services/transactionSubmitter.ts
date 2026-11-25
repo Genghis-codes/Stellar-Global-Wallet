@@ -11,6 +11,7 @@ import { AccountLock } from "./locks/accountLock";
 import { BuiltTransactionRegistry } from "./builtTransactions";
 import { config } from "../config";
 import { BUILD_TIMEOUT_SECONDS } from "./transactionEnvelope";
+import { ChannelAccountPool } from "./locks/channelAccountPool";
 import {
   DestinationNotFundedError,
   MemoRequiredError,
@@ -36,6 +37,13 @@ export interface TransactionSubmitterOptions {
   horizonService: HorizonService;
   accountLock: AccountLock;
   builtTransactionRegistry?: BuiltTransactionRegistry;
+  /**
+   * Optional channel-account pool. When provided (and enabled), sponsored
+   * submissions acquire a channel-account lease instead of serialising on the
+   * single source-account lock, and the inner transaction is wrapped in a
+   * treasury fee-bump so the channel account never needs to hold XLM.
+   */
+  channelAccountPool?: ChannelAccountPool;
   statusStore?: {
     record: (hash: string, accountId: string) => Promise<void>;
     update: (hash: string, status: string, details?: any) => Promise<void>;
@@ -46,6 +54,7 @@ export class TransactionSubmitter {
   private horizonService: HorizonService;
   private accountLock: AccountLock;
   private builtTransactionRegistry?: BuiltTransactionRegistry;
+  private channelAccountPool?: ChannelAccountPool;
   private statusStore?: {
     record: (hash: string, accountId: string) => Promise<void>;
     update: (hash: string, status: string, details?: any) => Promise<void>;
@@ -55,7 +64,15 @@ export class TransactionSubmitter {
     this.horizonService = options.horizonService;
     this.accountLock = options.accountLock;
     this.builtTransactionRegistry = options.builtTransactionRegistry;
+    this.channelAccountPool = options.channelAccountPool;
     this.statusStore = options.statusStore;
+  }
+
+  /**
+   * Whether submissions should go through the channel-account pool.
+   */
+  private isPoolEnabled(): boolean {
+    return Boolean(this.channelAccountPool && this.channelAccountPool.isEnabled());
   }
 
   /**
@@ -248,57 +265,117 @@ export class TransactionSubmitter {
       account: ConstructorParameters<typeof StellarSdk.TransactionBuilder>[0]
     ) => StellarSdk.TransactionBuilder
   ): Promise<{ hash: string; ledger: number; successful: boolean } | { hash: string; status: "pending" }> {
+    if (this.isPoolEnabled()) {
+      return this.submitWithChannelPool(sourcePublicKey, sourceKeypair, methodName, buildTransactionBuilder);
+    }
+
     const result = await this.accountLock.withLock(sourcePublicKey, async (lease) => {
-      let lastAttemptError: unknown;
-      for (let attempt = 0; attempt <= MAX_SEQ_RETRIES; attempt++) {
-        if (attempt > 0) {
-          const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
-          console.log(
-            `[transactionSubmitter] ${methodName} tx_bad_seq retry ${attempt}/${MAX_SEQ_RETRIES} ` +
-              `for ${sourcePublicKey} — waiting ${delay}ms`
-          );
-          await new Promise((r) => setTimeout(r, delay));
-        }
-
-        const sourceAccount = await this.horizonService.getAccount(sourcePublicKey);
-        const builder = buildTransactionBuilder(sourceAccount);
-        const tx = builder.build();
-        tx.sign(sourceKeypair);
-
-        const hash = Buffer.from(tx.hash()).toString("hex");
-        await this.statusStore?.record(hash, sourcePublicKey);
-
-        try {
-          const response = await this.horizonService["server"].submitTransaction(tx);
-          if (attempt > 0) {
-            console.log(
-              `[transactionSubmitter] ${methodName} tx_bad_seq retry ${attempt}/${MAX_SEQ_RETRIES} ` +
-                `succeeded for ${sourcePublicKey}`
-            );
-          }
-          await this.statusStore?.update(hash, "success", { ledger: response.ledger });
-          return { hash: response.hash, ledger: response.ledger, successful: response.successful };
-        } catch (err) {
-          if (this.isTxBadSeq(err) && attempt < MAX_SEQ_RETRIES) {
-            lastAttemptError = err;
-            continue;
-          }
-          
-          // Update status before throwing
-          const status = this.classifyError(err);
-          await this.statusStore?.update(hash, status, {
-            errorMessage: (err as Error).message,
-            resultCodes: this.getResultCodes(err),
-          });
-          
-          throw this.translateSubmissionError(err, sourcePublicKey);
-        }
-      }
-      throw this.translateSubmissionError(lastAttemptError, sourcePublicKey);
+      return this.submitWithRetries(sourcePublicKey, sourceKeypair, methodName, buildTransactionBuilder, null);
     });
 
     // Re-throw the locked result to preserve the response shape
     return result;
+  }
+
+  /**
+   * Submit through the channel-account pool: lease a channel account, build the
+   * inner transaction on it, wrap it in a treasury fee-bump and submit.
+   *
+   * The channel account's sequence number is what serialises per-channel, so
+   * N channels yield ~N transactions per ledger. tx_bad_seq retries reuse the
+   * same channel lease so the sequence stays consistent across attempts.
+   */
+  private async submitWithChannelPool(
+    sourcePublicKey: string,
+    sourceKeypair: StellarSdk.Keypair,
+    methodName: string,
+    buildTransactionBuilder: (
+      account: ConstructorParameters<typeof StellarSdk.TransactionBuilder>[0]
+    ) => StellarSdk.TransactionBuilder
+  ): Promise<{ hash: string; ledger: number; successful: boolean } | { hash: string; status: "pending" }> {
+    const pool = this.channelAccountPool!;
+    return pool.withChannelLease(async (channel) => {
+      return this.submitWithRetries(
+        sourcePublicKey,
+        sourceKeypair,
+        methodName,
+        buildTransactionBuilder,
+        channel
+      );
+    });
+  }
+
+  /**
+   * Core submission loop with tx_bad_seq retry and status tracking.
+   *
+   * When `channel` is provided the transaction is built on the channel account
+   * and wrapped in a fee-bump paid by the treasury; otherwise it is built and
+   * signed directly on the source account (legacy single-account path).
+   */
+  private async submitWithRetries(
+    sourcePublicKey: string,
+    sourceKeypair: StellarSdk.Keypair,
+    methodName: string,
+    buildTransactionBuilder: (
+      account: ConstructorParameters<typeof StellarSdk.TransactionBuilder>[0]
+    ) => StellarSdk.TransactionBuilder,
+    channel: { publicKey: string; keypair: StellarSdk.Keypair } | null
+  ): Promise<{ hash: string; ledger: number; successful: boolean } | { hash: string; status: "pending" }> {
+    const buildAccountId = channel ? channel.publicKey : sourcePublicKey;
+    let lastAttemptError: unknown;
+    for (let attempt = 0; attempt <= MAX_SEQ_RETRIES; attempt++) {
+      if (attempt > 0) {
+        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        console.log(
+          `[transactionSubmitter] ${methodName} tx_bad_seq retry ${attempt}/${MAX_SEQ_RETRIES} ` +
+            `for ${buildAccountId} — waiting ${delay}ms`
+        );
+        await new Promise((r) => setTimeout(r, delay));
+      }
+
+      const sourceAccount = await this.horizonService.getAccount(buildAccountId);
+      const builder = buildTransactionBuilder(sourceAccount);
+      const innerTx = builder.build();
+      innerTx.sign(sourceKeypair);
+
+      let submitTx: StellarSdk.Transaction | StellarSdk.FeeBumpTransaction = innerTx;
+      if (channel) {
+        // Channel accounts never hold XLM: the treasury pays the fee via a
+        // fee-bump, and the inner transaction fee is set to 0.
+        innerTx.sign(channel.keypair);
+        submitTx = this.channelAccountPool!.buildFeeBump(innerTx);
+      }
+
+      const hash = Buffer.from(submitTx.hash()).toString("hex");
+      await this.statusStore?.record(hash, sourcePublicKey);
+
+      try {
+        const response = await this.horizonService["server"].submitTransaction(submitTx);
+        if (attempt > 0) {
+          console.log(
+            `[transactionSubmitter] ${methodName} tx_bad_seq retry ${attempt}/${MAX_SEQ_RETRIES} ` +
+              `succeeded for ${buildAccountId}`
+          );
+        }
+        await this.statusStore?.update(hash, "success", { ledger: response.ledger });
+        return { hash: response.hash, ledger: response.ledger, successful: response.successful };
+      } catch (err) {
+        if (this.isTxBadSeq(err) && attempt < MAX_SEQ_RETRIES) {
+          lastAttemptError = err;
+          continue;
+        }
+
+        // Update status before throwing
+        const status = this.classifyError(err);
+        await this.statusStore?.update(hash, status, {
+          errorMessage: (err as Error).message,
+          resultCodes: this.getResultCodes(err),
+        });
+
+        throw this.translateSubmissionError(err, buildAccountId);
+      }
+    }
+    throw this.translateSubmissionError(lastAttemptError, buildAccountId);
   }
 
   /**

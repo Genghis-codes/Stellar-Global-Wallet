@@ -174,14 +174,14 @@ fn measure_all() -> BTreeMap<std::string::String, Cost> {
     r.measure("globe_wallet.get_allowed_tokens", || w.get_allowed_tokens());
     r.measure("globe_wallet.allowed_tokens", || w.allowed_tokens());
     let expiry = env.ledger().sequence() + 10_000;
-    r.measure("token_wrapper.approve", || tw.approve(&user, &wallet_id, &token_id, &500_000, &expiry));
+    r.measure("token_wrapper.approve", || tw.approve(&user, &wallet_id, &token_id, &500_000, &expiry, &None));
     r.measure("token_wrapper.allowance", || tw.allowance(&user, &wallet_id, &token_id));
     r.measure("token_wrapper.extend_allowance_ttl", || tw.extend_allowance_ttl(&user, &wallet_id, &token_id));
     let to = Address::generate(&env);
     r.measure("globe_wallet.send", || w.send(&user, &token_id, &to, &100));
     let spender = Address::generate(&env);
-    tw.approve(&user, &spender, &token_id, &1_000, &expiry);
-    r.measure("token_wrapper.transfer_from", || tw.transfer_from(&spender, &token_id, &user, &to, &10));
+    tw.approve(&user, &spender, &token_id, &1_000, &expiry, &None);
+    r.measure("token_wrapper.transfer_from", || tw.transfer_from(&spender, &token_id, &user, &to, &10, &None));
     r.measure("globe_wallet.remove_allowed_token", || w.remove_allowed_token(&admin, &token_id));
 
     r.results

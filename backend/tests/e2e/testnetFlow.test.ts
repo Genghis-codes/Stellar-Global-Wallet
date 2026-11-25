@@ -20,6 +20,14 @@ import * as StellarSdk from "@stellar/stellar-sdk";
 import { config } from "../../src/config";
 import { SorobanService } from "../../src/services/soroban";
 import { GlobeWalletContract } from "../../src/services/contracts/globeWallet";
+import {
+  buildCloseAccountTransaction,
+  simulateCloseAccount,
+  buildClaimClaimableBalanceTransaction,
+  buildReclaimClaimableBalanceTransaction,
+  evaluateClaimableBalancePredicate,
+} from "../../src/services/stellar";
+import { ChannelAccountPool } from "../../src/services/channelAccountPool";
 
 const e2eEnabled = process.env.E2E_TESTNET === "1";
 const maybeDescribe = e2eEnabled ? describe : describe.skip;
@@ -115,6 +123,175 @@ maybeDescribe("testnet e2e: build -> sign locally -> submit", () => {
 
     const result = await server.submitTransaction(tx);
     expect(result.successful).toBe(true);
+  });
+});
+
+maybeDescribe("testnet e2e: close account flow (#288)", () => {
+  it("closes a testnet account fully and recovers reserves", async () => {
+    const [source, destination] = await Promise.all([fundTestnetAccount(), fundTestnetAccount()]);
+
+    const sourceAccount = await withRetries(() => server.loadAccount(source.publicKey()));
+    const startingBalance = BigInt(
+      sourceAccount.balances.find((b) => b.asset_type === "native")!.balance.replace(".", "")
+    );
+
+    const tx = await buildCloseAccountTransaction({
+      sourceAccount,
+      destination: destination.publicKey(),
+      networkPassphrase: config.NETWORK_PASSPHRASE,
+    });
+    tx.sign(source);
+
+    const result = await server.submitTransaction(tx);
+    expect(result.successful).toBe(true);
+
+    // The merged account no longer exists on the ledger.
+    await expect(server.loadAccount(source.publicKey())).rejects.toMatchObject({ response: { status: 404 } });
+
+    const destinationAccount = await withRetries(() => server.loadAccount(destination.publicKey()));
+    const endingBalance = BigInt(
+      destinationAccount.balances.find((b) => b.asset_type === "native")!.balance.replace(".", "")
+    );
+    expect(endingBalance).toBeGreaterThan(startingBalance);
+  });
+
+  it("dry-runs the close-account sequence with simulation output", async () => {
+    const [source, destination] = await Promise.all([fundTestnetAccount(), fundTestnetAccount()]);
+    const sourceAccount = await withRetries(() => server.loadAccount(source.publicKey()));
+
+    const simulation = await simulateCloseAccount({
+      sourceAccount,
+      destination: destination.publicKey(),
+      networkPassphrase: config.NETWORK_PASSPHRASE,
+    });
+
+    expect(simulation.success).toBe(true);
+    expect(Array.isArray(simulation.operations)).toBe(true);
+    expect(simulation.operations.length).toBeGreaterThan(0);
+    expect(simulation.operations[simulation.operations.length - 1].type).toBe("accountMerge");
+  });
+});
+
+maybeDescribe("testnet e2e: claimable balances (#289)", () => {
+  it("evaluates predicates and claims a claimable balance", async () => {
+    const [sponsor, claimant] = await Promise.all([fundTestnetAccount(), fundTestnetAccount()]);
+
+    const sponsorAccount = await withRetries(() => server.loadAccount(sponsor.publicKey()));
+    const createTx = new StellarSdk.TransactionBuilder(sponsorAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: config.NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        StellarSdk.Operation.createClaimableBalance({
+          asset: StellarSdk.Asset.native(),
+          amount: "10",
+          claimants: [
+            new StellarSdk.Claimant(claimant.publicKey(), StellarSdk.Claimant.predicateUnconditional()),
+          ],
+        })
+      )
+      .setTimeout(30)
+      .build();
+    createTx.sign(sponsor);
+    const createResult = await server.submitTransaction(createTx);
+    expect(createResult.successful).toBe(true);
+
+    const balances = await withRetries(() => server.claimableBalances().claimant(claimant.publicKey()).call());
+    expect(balances.records.length).toBeGreaterThan(0);
+    const balance = balances.records[0];
+
+    const evaluation = evaluateClaimableBalancePredicate(balance, new Date());
+    expect(evaluation.status).toBe("claimable_now");
+
+    const claimantAccount = await withRetries(() => server.loadAccount(claimant.publicKey()));
+    const claimTx = await buildClaimClaimableBalanceTransaction({
+      sourceAccount: claimantAccount,
+      balanceId: balance.id,
+      networkPassphrase: config.NETWORK_PASSPHRASE,
+    });
+    claimTx.sign(claimant);
+    const claimResult = await server.submitTransaction(claimTx);
+    expect(claimResult.successful).toBe(true);
+  });
+
+  it("builds a reclaim transaction for the sponsor", async () => {
+    const [sponsor, claimant] = await Promise.all([fundTestnetAccount(), fundTestnetAccount()]);
+
+    const sponsorAccount = await withRetries(() => server.loadAccount(sponsor.publicKey()));
+    const createTx = new StellarSdk.TransactionBuilder(sponsorAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: config.NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        StellarSdk.Operation.createClaimableBalance({
+          asset: StellarSdk.Asset.native(),
+          amount: "10",
+          claimants: [
+            new StellarSdk.Claimant(
+              claimant.publicKey(),
+              StellarSdk.Claimant.predicateNot(StellarSdk.Claimant.predicateUnconditional())
+            ),
+          ],
+        })
+      )
+      .setTimeout(30)
+      .build();
+    createTx.sign(sponsor);
+    await server.submitTransaction(createTx);
+
+    const balances = await withRetries(() => server.claimableBalances().sponsor(sponsor.publicKey()).call());
+    expect(balances.records.length).toBeGreaterThan(0);
+
+    const reclaimTx = await buildReclaimClaimableBalanceTransaction({
+      sourceAccount: sponsorAccount,
+      balanceId: balances.records[0].id,
+      networkPassphrase: config.NETWORK_PASSPHRASE,
+    });
+    reclaimTx.sign(sponsor);
+    const reclaimResult = await server.submitTransaction(reclaimTx);
+    expect(reclaimResult.successful).toBe(true);
+  });
+});
+
+maybeDescribe("testnet e2e: channel account pool (#292)", () => {
+  it("leases distinct channel accounts and wraps submissions in fee-bump transactions", async () => {
+    const treasury = await fundTestnetAccount();
+    const channels = await Promise.all([fundTestnetAccount(), fundTestnetAccount()]);
+    const pool = new ChannelAccountPool({
+      channelSecrets: channels.map((c) => c.secret()),
+      treasurySecret: treasury.secret(),
+      networkPassphrase: config.NETWORK_PASSPHRASE,
+      horizonUrl: config.HORIZON_URL,
+    });
+
+    const [leaseA, leaseB] = await Promise.all([pool.acquire(), pool.acquire()]);
+    expect(leaseA.publicKey).not.toBe(leaseB.publicKey);
+
+    const destination = await fundTestnetAccount();
+    const channelAccount = await withRetries(() => server.loadAccount(leaseA.publicKey));
+    const innerTx = new StellarSdk.TransactionBuilder(channelAccount, {
+      fee: StellarSdk.BASE_FEE,
+      networkPassphrase: config.NETWORK_PASSPHRASE,
+    })
+      .addOperation(
+        StellarSdk.Operation.payment({
+          destination: destination.publicKey(),
+          asset: StellarSdk.Asset.native(),
+          amount: "1",
+        })
+      )
+      .setTimeout(30)
+      .build();
+    innerTx.sign(StellarSdk.Keypair.fromSecret(leaseA.secret));
+
+    const feeBump = pool.wrapFeeBump(innerTx);
+    feeBump.sign(StellarSdk.Keypair.fromSecret(treasury.secret()));
+
+    const result = await server.submitTransaction(feeBump);
+    expect(result.successful).toBe(true);
+
+    await leaseA.release();
+    await leaseB.release();
   });
 });
 
