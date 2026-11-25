@@ -127,3 +127,10 @@ export type {
   ListClaimableBalancesResponse,
 } from "./client.js";
 
+
+/**
+ * Key management (#295): pluggable non-exportable keystores (WebCrypto,
+ * Expo SecureStore, hardware wallet), biometric gating, and an adapter to
+ * the bindings' signer shape.
+ */
+export * from "./keystore/index.js";
