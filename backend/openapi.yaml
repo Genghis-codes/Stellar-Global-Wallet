@@ -227,6 +227,214 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /account/{publicKey}/close/build:
+    parameters:
+      - $ref: '#/components/parameters/PublicKey'
+    post:
+      tags: [account]
+      summary: Build an unsigned account-closing transaction (#288)
+      description: >
+        Builds a single transaction that cancels open offers, resolves
+        claimable balances, removes trustlines, removes signers and data
+        entries, and finally merges the account into `destination`. The
+        account must end with a zero XLM balance (minus the merge fee) and
+        no remaining subentries. With `dryRun: true` the transaction is
+        simulated against Soroban RPC and nothing is returned for signing.
+      operationId: buildCloseAccount
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloseAccountBuildRequest'
+      responses:
+        '200':
+          description: Unsigned merge transaction, or a dry-run simulation report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CloseAccountBuildResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Account or destination not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Account cannot be closed (open offers, sponsored entries, or unresolved claimable balances)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Simulation failed or the account still holds assets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /account/{publicKey}/claimable-balances:
+    parameters:
+      - $ref: '#/components/parameters/PublicKey'
+    get:
+      tags: [account]
+      summary: List claimable balances for an account with evaluated predicates (#289)
+      description: >
+        Returns every claimable balance where the account is the claimant or
+        the sponsor, with predicates evaluated against the current ledger
+        close time (`claimableNow`, `claimableAfter`, `claimableBefore`).
+      operationId: listClaimableBalances
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [claimant, sponsor, any]
+            default: any
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [claimable, pending, expired, claimed, all]
+            default: all
+      responses:
+        '200':
+          description: Claimable balances
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ledgerCloseTime, balances]
+                properties:
+                  ledgerCloseTime:
+                    type: string
+                    format: date-time
+                    description: Ledger time used to evaluate predicates.
+                  balances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClaimableBalance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /account/{publicKey}/claimable-balances/{balanceId}/claim/build:
+    parameters:
+      - $ref: '#/components/parameters/PublicKey'
+      - $ref: '#/components/parameters/BalanceId'
+    post:
+      tags: [account]
+      summary: Build an unsigned claim transaction (#289)
+      description: >
+        Builds a `claimClaimableBalance` operation. When the claimant has no
+        trustline for the asset, a `changeTrust` operation is prepended.
+        Fails with `CLAIMABLE_BALANCE_NOT_CLAIMABLE` when the predicate is not
+        yet satisfied and `CLAIMABLE_BALANCE_EXPIRED` when it can no longer
+        be claimed.
+      operationId: buildClaimClaimableBalance
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimableBalanceBuildRequest'
+      responses:
+        '200':
+          description: Unsigned claim transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimableBalanceBuildResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Balance or account not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Account is not a claimant, or the balance is already claimed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Predicate not satisfied, expired, or insufficient reserve for a new trustline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /account/{publicKey}/claimable-balances/{balanceId}/reclaim/build:
+    parameters:
+      - $ref: '#/components/parameters/PublicKey'
+      - $ref: '#/components/parameters/BalanceId'
+    post:
+      tags: [account]
+      summary: Build an unsigned reclaim (clawback) transaction (#289)
+      description: >
+        Builds a `clawbackClaimableBalance` operation for the asset issuer.
+        Only the issuer of the balance's asset may reclaim it; the balance
+        must not be clawback-enabled by a different issuer.
+      operationId: buildReclaimClaimableBalance
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimableBalanceBuildRequest'
+      responses:
+        '200':
+          description: Unsigned reclaim transaction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimableBalanceBuildResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller is not the issuer of the balance's asset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Balance or account not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Balance is already claimed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Asset is not clawback-enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /contract/upgrade/status:
     get:
       tags: [contract]
@@ -1170,6 +1378,21 @@ components:
       required: true
       schema:
         $ref: '#/components/schemas/StellarAddress'
+    PublicKey:
+      name: publicKey
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/StellarAddress'
+    BalanceId:
+      name: balanceId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9a-f]{72}$'
+        description: Claimable balance id (hex-encoded 32-byte ledger key, without the 0x prefix)
+        examples: ['00000000da0d57da7d4850e7fc10d2a9d0ebc731f7afb40574c03395b17d49149b91f5be']
     ContractId:
       name: contractId
       in: path
@@ -1407,6 +1630,164 @@ components:
           type: string
           pattern: '^(?:0|[1-9]\d*)(?:\.\d{1,7})?$'
           description: Positive decimal trustline limit, or any zero-valued decimal string to remove the trustline.
+    CloseAccountBuildRequest:
+      type: object
+      additionalProperties: false
+      required: [destination]
+      properties:
+        destination:
+          $ref: '#/components/schemas/StellarAddress'
+        dryRun:
+          type: boolean
+          default: false
+          description: Simulate the transaction instead of returning it for signing.
+        assetDestination:
+          $ref: '#/components/schemas/StellarAddress'
+          description: >
+            Optional account that receives non-XLM balances. Defaults to
+            `destination`. Must already hold the relevant trustlines.
+        convertToXlm:
+          type: boolean
+          default: false
+          description: >
+            Attempt to convert non-XLM balances to XLM via path payments
+            before merging. Requires `assetDestination` to be omitted.
+    CloseAccountBuildResponse:
+      type: object
+      required: [networkPassphrase, dryRun, operations, reserveRecovered]
+      properties:
+        xdr:
+          type: string
+          nullable: true
+          description: Unsigned transaction envelope; null when `dryRun` is true.
+        networkPassphrase:
+          type: string
+        dryRun:
+          type: boolean
+        operations:
+          type: array
+          description: Ordered operations included in the transaction.
+          items:
+            type: object
+            required: [type]
+            properties:
+              type: string
+              enum: [manageSellOffer, manageBuyOffer, claimClaimableBalance, pathPaymentStrictSend, payment, changeTrust, setOptions, manageData, accountMerge]
+              description: Stellar operation type.
+              asset:
+                $ref: '#/components/schemas/Asset'
+              amount:
+                $ref: '#/components/schemas/Amount'
+        reserveRecovered:
+          $ref: '#/components/schemas/Amount'
+        simulation:
+          nullable: true
+          type: object
+          description: Present only when `dryRun` is true.
+          required: [success, latestLedger]
+          properties:
+            success:
+              type: boolean
+            latestLedger:
+              type: integer
+            minResourceFee:
+              type: string
+              description: Soroban resource fee in stroops.
+            error:
+              type: string
+              nullable: true
+              description: Simulation error message when `success` is false.
+    ClaimableBalanceBuildRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        createTrustline:
+          type: boolean
+          default: true
+          description: >
+            For claim builds, prepend a `changeTrust` operation when the
+            claimant has no trustline for the asset. Ignored for reclaim.
+    ClaimableBalanceBuildResponse:
+      type: object
+      required: [xdr, networkPassphrase, balanceId, asset, amount, operations]
+      properties:
+        xdr:
+          type: string
+        networkPassphrase:
+          type: string
+        balanceId:
+          type: string
+        asset:
+          $ref: '#/components/schemas/Asset'
+        amount:
+          $ref: '#/components/schemas/Amount'
+        operations:
+          type: array
+          items:
+            type: object
+            required: [type]
+            properties:
+              type:
+                type: string
+                enum: [changeTrust, claimClaimableBalance, clawbackClaimableBalance]
+              asset:
+                $ref: '#/components/schemas/Asset'
+    ClaimPredicate:
+      type: object
+      description: >
+        Normalised claim predicate. `unconditional` is true when the balance
+        can always be claimed; otherwise `before` and/or `after` bound the
+        claim window (ISO-8601 timestamps).
+      required: [unconditional]
+      properties:
+        unconditional:
+          type: boolean
+        before:
+          type: [string, 'null']
+          format: date-time
+        after:
+          type: [string, 'null']
+          format: date-time
+    ClaimableBalance:
+      type: object
+      required: [id, asset, amount, sponsor, claimants, predicate, claimableNow, claimableAfter, claimableBefore, status]
+      properties:
+        id:
+          type: string
+        asset:
+          $ref: '#/components/schemas/Asset'
+        amount:
+          $ref: '#/components/schemas/Amount'
+        sponsor:
+          $ref: '#/components/schemas/StellarAddress'
+        claimants:
+          type: array
+          items:
+            type: object
+            required: [destination, predicate]
+            properties:
+              destination:
+                $ref: '#/components/schemas/StellarAddress'
+              predicate:
+                $ref: '#/components/schemas/ClaimPredicate'
+        predicate:
+          $ref: '#/components/schemas/ClaimPredicate'
+          description: Predicate for the requesting account, or the first claimant when it is not a claimant.
+        claimableNow:
+          type: boolean
+        claimableAfter:
+          type: [string, 'null']
+          format: date-time
+          description: Earliest time the balance becomes claimable; null when unconditional.
+        claimableBefore:
+          type: [string, 'null']
+          format: date-time
+          description: Latest time the balance can be claimed; null when unbounded.
+        status:
+          type: string
+          enum: [claimable, pending, expired, claimed]
+        lastModifiedLedger:
+          type: integer
     TrustlineBuildResponse:
       type: object
       required: [xdr, networkPassphrase, reserveDelta, spendableXlmAfter]
@@ -1500,6 +1881,19 @@ components:
                 - TRUSTLINE_NOT_FOUND
                 - TRUSTLINE_HAS_BALANCE
                 - ASSET_HAS_ACTIVE_SPEND_LIMIT
+                - ACCOUNT_HAS_OPEN_OFFERS
+                - ACCOUNT_HAS_SPONSORED_ENTRIES
+                - ACCOUNT_HAS_CLAIMABLE_BALANCES
+                - ACCOUNT_HAS_TRUSTLINES
+                - ACCOUNT_MERGE_SELF_NOT_ALLOWED
+                - CLAIMABLE_BALANCE_NOT_FOUND
+                - CLAIMABLE_BALANCE_NOT_CLAIMABLE
+                - CLAIMABLE_BALANCE_EXPIRED
+                - CLAIMABLE_BALANCE_ALREADY_CLAIMED
+                - CLAIMABLE_BALANCE_NOT_CLAIMANT
+                - CLAIMABLE_BALANCE_NOT_ISSUER
+                - CLAIMABLE_BALANCE_ASSET_NOT_CLAWBACK_ENABLED
+                - SIMULATION_FAILED
             message:
               type: string
             requestId:

@@ -34,6 +34,63 @@ return 0
 export type RedisAccountLockOptions = AccountLockOptions;
 
 /**
+ * Lease a channel account from the pool. Uses the same SET NX PX + fencing
+ * counter semantics as the account lock, but keyed per channel account so
+ * several channels can be leased concurrently.
+ */
+export class RedisChannelLease {
+  protected readonly backend = "redis";
+
+  constructor(
+    private readonly client: RedisClientType,
+    private readonly ttlMs: number
+  ) {}
+
+  private keys(channelId: string): [string, string] {
+    return [
+      `orbit-wal:${config.STELLAR_NETWORK}:channel-lease:${channelId}`,
+      `orbit-wal:${config.STELLAR_NETWORK}:channel-lease-fence:${channelId}`,
+    ];
+  }
+
+  async tryAcquire(channelId: string, token: string): Promise<number | null> {
+    if (this.client.isReady === false) this.unavailable(new Error("Redis client is not connected"));
+    let result: unknown;
+    try {
+      result = await this.client.eval(ACQUIRE_SCRIPT, {
+        keys: this.keys(channelId),
+        arguments: [token, String(this.ttlMs)],
+      });
+    } catch (err) {
+      this.unavailable(err);
+    }
+    return result === null || result === undefined || result === false ? null : Number(result);
+  }
+
+  async tryExtend(channelId: string, token: string): Promise<boolean> {
+    const [lockKey] = this.keys(channelId);
+    const result = await this.client.eval(EXTEND_SCRIPT, {
+      keys: [lockKey],
+      arguments: [token, String(this.ttlMs)],
+    });
+    return Number(result) === 1;
+  }
+
+  async tryRelease(channelId: string, token: string): Promise<void> {
+    const [lockKey] = this.keys(channelId);
+    await this.client.eval(RELEASE_SCRIPT, { keys: [lockKey], arguments: [token] });
+  }
+
+  private unavailable(err: unknown): never {
+    metrics.lockFailures.inc({ backend: this.backend, reason: "unavailable" });
+    throw new LockUnavailableError(
+      `The channel lease backend (Redis) is unreachable: ${(err as Error)?.message ?? String(err)}. ` +
+        "The payment was NOT submitted — safe to retry."
+    );
+  }
+}
+
+/**
  * Cross-process account lock backed by a single Redis instance: SET NX PX
  * with token-checked release and extension, plus a fencing counter. Not the
  * multi-node Redlock algorithm — see docs/concurrency.md.

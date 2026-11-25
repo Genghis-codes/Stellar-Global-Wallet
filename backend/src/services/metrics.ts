@@ -214,6 +214,33 @@ export const metrics = {
   pushRateLimited: register(
     new Counter("push_rate_limited_total", "Push notifications rejected due to rate limiting")
   ),
+  /** #292 — Channel accounts currently leased out of the pool, by channel. */
+  channelPoolInUse: register(
+    new Gauge("channel_pool_in_use", "Channel accounts currently leased from the pool, by channel")
+  ),
+  /** #292 — Time spent waiting for a channel account lease, by outcome. */
+  channelPoolLeaseWaitMs: register(
+    new Histogram(
+      "channel_pool_lease_wait_ms",
+      "Milliseconds spent waiting to acquire a channel account lease",
+      [1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000]
+    )
+  ),
+  /** #292 — Channel account top-ups from the treasury, by channel and outcome. */
+  channelTopups: register(
+    new Counter("channel_topups_total", "Channel account top-ups from the treasury, by channel and outcome")
+  ),
+  /** #292 — Fee-bump submissions that failed, by reason. */
+  feeBumpFailures: register(
+    new Counter("fee_bump_failures_total", "Fee-bump submissions that failed, by reason")
+  ),
+  /** #289 — Claimable balance notifications emitted, by kind and outcome. */
+  claimableBalanceNotifications: register(
+    new Counter(
+      "claimable_balance_notifications_total",
+      "Claimable balance notifications emitted, by kind and outcome"
+    )
+  ),
 };
 
 export function renderMetrics(): string {

@@ -139,6 +139,78 @@ function readErrorBody(body: unknown): { code?: string; message?: string } {
   return { code: typeof code === 'string' ? code : undefined };
 }
 
+/** A single operation in a built transaction, as returned by the backend. */
+export interface BuiltOperation {
+  type: string;
+  [key: string]: unknown;
+}
+
+/** A transaction built by the backend, ready to be signed and submitted. */
+export interface BuiltTransaction {
+  /** Base64-encoded transaction envelope (XDR). */
+  xdr: string;
+  /** Network passphrase the transaction is bound to. */
+  networkPassphrase: string;
+  /** Human-readable summary of the operations in the transaction. */
+  operations: BuiltOperation[];
+  /** Optional fee/resource estimate produced by simulation. */
+  simulation?: {
+    success: boolean;
+    fee?: string;
+    error?: string;
+  };
+}
+
+/** Request body for `POST /api/v1/account/close`. */
+export interface BuildCloseAccountRequest {
+  /** Stellar account (G...) to close. */
+  account: string;
+  /** Destination account (G...) that receives remaining balances and reserves. */
+  destination: string;
+  /** Optional secret-free signing hints; the backend never signs. */
+  memo?: string;
+}
+
+/** Request body for `POST /api/v1/claimable-balances/claim`. */
+export interface BuildClaimClaimableBalanceRequest {
+  /** Stellar account (G...) claiming the balance. */
+  account: string;
+  /** Claimable balance id (hex, 72 chars). */
+  balanceId: string;
+  /** Create the asset trustline first when the account lacks it. */
+  createTrustline?: boolean;
+}
+
+/** Request body for `POST /api/v1/claimable-balances/reclaim`. */
+export interface BuildReclaimClaimableBalanceRequest {
+  /** Stellar account (G...) reclaiming the balance (must be the sponsor). */
+  account: string;
+  /** Claimable balance id (hex, 72 chars). */
+  balanceId: string;
+}
+
+/** Predicate evaluation state for a claimable balance. */
+export type ClaimableBalanceState = 'claimable_now' | 'claimable_after' | 'claimable_before' | 'expired';
+
+/** A claimable balance with its predicates evaluated server-side. */
+export interface ClaimableBalance {
+  id: string;
+  asset: string;
+  amount: string;
+  sponsor: string;
+  claimant: string;
+  /** ISO-8601 timestamp of the absolute-time predicate, when present. */
+  claimableAfter?: string;
+  /** ISO-8601 timestamp of the absolute-time upper bound, when present. */
+  claimableBefore?: string;
+  state: ClaimableBalanceState;
+}
+
+/** Response for `GET /api/v1/claimable-balances`. */
+export interface ListClaimableBalancesResponse {
+  balances: ClaimableBalance[];
+}
+
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly tokenStore: TokenStore;
@@ -271,6 +343,55 @@ export class ApiClient {
       }
       return body as T;
     }
+  }
+
+  /** Build a transaction that closes `account` and merges it into `destination`. */
+  buildCloseAccount(
+    body: BuildCloseAccountRequest,
+    options: Omit<RequestOptions, 'method' | 'body'> = {},
+  ): Promise<BuiltTransaction> {
+    return this.request<BuiltTransaction>('/api/v1/account/close', {
+      ...options,
+      method: 'POST',
+      body,
+      idempotencyKey: options.idempotencyKey ?? `close-account:${body.account}`,
+    });
+  }
+
+  /** List claimable balances for the authenticated account with evaluated predicates. */
+  listClaimableBalances(
+    options: Omit<RequestOptions, 'method' | 'body'> = {},
+  ): Promise<ListClaimableBalancesResponse> {
+    return this.request<ListClaimableBalancesResponse>('/api/v1/claimable-balances', {
+      ...options,
+      method: 'GET',
+    });
+  }
+
+  /** Build a transaction that claims a claimable balance (creating the trustline if needed). */
+  buildClaimClaimableBalance(
+    body: BuildClaimClaimableBalanceRequest,
+    options: Omit<RequestOptions, 'method' | 'body'> = {},
+  ): Promise<BuiltTransaction> {
+    return this.request<BuiltTransaction>('/api/v1/claimable-balances/claim', {
+      ...options,
+      method: 'POST',
+      body,
+      idempotencyKey: options.idempotencyKey ?? `claim-balance:${body.balanceId}`,
+    });
+  }
+
+  /** Build a transaction that reclaims a claimable balance (sponsor only). */
+  buildReclaimClaimableBalance(
+    body: BuildReclaimClaimableBalanceRequest,
+    options: Omit<RequestOptions, 'method' | 'body'> = {},
+  ): Promise<BuiltTransaction> {
+    return this.request<BuiltTransaction>('/api/v1/claimable-balances/reclaim', {
+      ...options,
+      method: 'POST',
+      body,
+      idempotencyKey: options.idempotencyKey ?? `reclaim-balance:${body.balanceId}`,
+    });
   }
 
   private async safeJson(res: Response): Promise<unknown> {

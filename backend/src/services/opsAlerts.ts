@@ -11,7 +11,10 @@ export type OpsAlertKind =
   | "ttl_extend_failed"
   | "ttl_restored"
   | "upgrade_proposed"
-  | "upgrade_executed";
+  | "upgrade_executed"
+  | "channel_pool_exhausted"
+  | "channel_topup_failed"
+  | "channel_fee_bump_failed";
 
 export interface OpsAlert {
   kind: OpsAlertKind;

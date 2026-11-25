@@ -1,5 +1,6 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 import { AppError, HorizonError, NotFoundError, ValidationError } from "../errors/appError";
+import { isGAddress as _isGAddress } from "../utils/stellarAddress";
 import { config } from "../config";
 import { validatePathAssets } from "../validation/stellarAsset";
 import { AccountLock, InProcessAccountLock } from "./locks/accountLock";
@@ -180,7 +181,7 @@ export class StellarService {
    * (index.ts) always sets it; unit tests that don't care leave it null.
    */
   private readonly builtTxs: BuiltTransactionRegistry | null;
-  private readonly maxResponseBytes: number;
+  private readonly maxResponseBytes: number = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES;
 
   constructor(
     accountLock: AccountLock = new InProcessAccountLock(),
@@ -194,6 +195,7 @@ export class StellarService {
     });
     this.accountLock = accountLock;
     this.builtTxs = builtTxs;
+    installUpstreamHttpGuards(this.server, this.maxResponseBytes);
   }
 
   /** Record an unsigned transaction a build endpoint is about to return (#194). */
@@ -1662,6 +1664,667 @@ export class StellarService {
       signers: (validated.signers ?? []).map((s) => ({ key: s.key, weight: s.weight })),
     };
   }
+
+  // ---------------------------------------------------------------------------
+  //  Issue #288 – Close account: cancel offers, drain balances, remove
+  //  trustlines/signers/data, then merge into a destination.
+  // ---------------------------------------------------------------------------
+  // The builder is pure: it reads the account once and returns an unsigned
+  // envelope plus a summary of what each operation does. Nothing is submitted
+  // and no sequence number is reserved. Ordering matters on-chain: offers must
+  // be cancelled before their selling liabilities are drained, trustlines can
+  // only be removed once their balance is zero, and accountMerge must be last
+  // (it deletes the source account, so any later operation would fail).
+  // ---------------------------------------------------------------------------
+
+  async buildCloseAccountTransaction(params: {
+    account: string;
+    destination: string;
+    /** Assets to convert to XLM via path payments instead of sending directly. */
+    convertAssets?: string[];
+    /** Assets to send directly to the destination (default: all non-zero). */
+    sendAssets?: string[];
+    /** Remove extra signers (default true). */
+    removeSigners?: boolean;
+    /** Remove data entries (default true). */
+    removeData?: boolean;
+    /** Slippage tolerance for conversions, in basis points. */
+    slippageBps?: number;
+  }): Promise<CloseAccountBuild> {
+    const { account: accountId, destination } = params;
+    assertGAddress(accountId, "account");
+    assertGAddress(destination, "destination");
+    if (accountId === destination) {
+      throw new AppError("The destination must differ from the account being closed", {
+        code: "CLOSE_ACCOUNT_INVALID_DESTINATION",
+        status: 400,
+      });
+    }
+
+    const convertAssets = params.convertAssets ?? [];
+    const sendAssets = params.sendAssets ?? [];
+    for (const asset of [...convertAssets, ...sendAssets]) {
+      assertAssetString(asset, "asset");
+    }
+    const slippageBps = params.slippageBps ?? DEFAULT_SLIPPAGE_BPS;
+    if (!Number.isInteger(slippageBps) || slippageBps < 0 || slippageBps > 10_000) {
+      throw new AppError("slippageBps must be an integer between 0 and 10000", {
+        code: "VALIDATION_ERROR",
+        status: 400,
+      });
+    }
+
+    const sourceAccount = await this.getAccount(accountId);
+    const validated = validateHorizonAccountReserves(sourceAccount, this.maxResponseBytes);
+    const balances = validateHorizonAccountBalances(sourceAccount, this.maxResponseBytes);
+
+    const operations: CloseAccountOperationSummary[] = [];
+    const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: await this.currentBaseFee(),
+      networkPassphrase: this.networkPassphrase,
+    });
+
+    // 1. Cancel open offers. Selling liabilities must be released before the
+    //    balance can be drained or the trustline removed.
+    const offers = await this.loadOpenOffers(accountId);
+    for (const offer of offers) {
+      builder.addOperation(
+        StellarSdk.Operation.manageSellOffer({
+          selling: parseAsset(offer.selling),
+          buying: parseAsset(offer.buying),
+          amount: "0",
+          price: offer.price,
+          offerId: offer.id,
+        })
+      );
+      operations.push({
+        type: "cancelOffer",
+        offerId: offer.id,
+        selling: offer.selling,
+        buying: offer.buying,
+      });
+    }
+
+    // 2. Drain non-native balances. Sponsored trustlines are unwrapped first
+    //    (revoke sponsorship) so the reserve is released back to the sponsor
+    //    and the trustline can be removed.
+    const sponsoredTrustlines = balances.filter(
+      (b): b is CreditBalanceLine =>
+        (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") &&
+        !!b.sponsor &&
+        b.sponsor !== accountId
+    );
+    for (const line of sponsoredTrustlines) {
+      const asset = new StellarSdk.Asset(line.asset_code, line.asset_issuer);
+      builder.addOperation(
+        StellarSdk.Operation.revokeAccountSponsorship({
+          account: accountId,
+        })
+      );
+      operations.push({
+        type: "revokeSponsorship",
+        asset: `${line.asset_code}:${line.asset_issuer}`,
+        sponsor: line.sponsor,
+      });
+      // After revoking, the trustline is owned by the account and can be
+      // drained/removed like any other.
+      void asset;
+    }
+
+    const creditLines = balances.filter(
+      (b): b is CreditBalanceLine =>
+        b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12"
+    );
+
+    for (const line of creditLines) {
+      const assetString = `${line.asset_code}:${line.asset_issuer}`;
+      const balance = toStroops(line.balance);
+      const isSponsored = !!line.sponsor && line.sponsor !== accountId;
+
+      if (balance > 0n) {
+        const shouldConvert = convertAssets.includes(assetString);
+        const shouldSend = sendAssets.length === 0 || sendAssets.includes(assetString);
+        if (shouldConvert) {
+          // Convert to XLM via a strict-send path payment back to self.
+          const quoted = await this.findStrictSendPaths({
+            sourceAmount: line.balance,
+            sourceAsset: assetString,
+            destinationAsset: "XLM",
+            destinationPublicKey: accountId,
+          });
+          const quote = quoted[0] as { destination_amount?: string } | undefined;
+          if (!quote?.destination_amount) {
+            throw new AppError(`No conversion path found for ${assetString}`, {
+              code: "CLOSE_ACCOUNT_NO_PATH",
+              status: 422,
+            });
+          }
+          const destMin = minReceiveAfterSlippage(quote.destination_amount, slippageBps);
+          builder.addOperation(
+            StellarSdk.Operation.pathPaymentStrictSend({
+              sendAsset: new StellarSdk.Asset(line.asset_code, line.asset_issuer),
+              sendAmount: line.balance,
+              destination: accountId,
+              destAsset: StellarSdk.Asset.native(),
+              destMin,
+              path: [],
+            })
+          );
+          operations.push({
+            type: "convertBalance",
+            asset: assetString,
+            amount: line.balance,
+            expectedXlm: quote.destination_amount,
+            minXlm: destMin,
+          });
+        } else if (shouldSend) {
+          builder.addOperation(
+            StellarSdk.Operation.payment({
+              destination,
+              asset: new StellarSdk.Asset(line.asset_code, line.asset_issuer),
+              amount: line.balance,
+            })
+          );
+          operations.push({ type: "sendBalance", asset: assetString, amount: line.balance });
+        } else {
+          throw new AppError(
+            `Asset ${assetString} has a non-zero balance but is neither converted nor sent`,
+            { code: "CLOSE_ACCOUNT_BALANCE_NOT_DRAINED", status: 422 }
+          );
+        }
+      }
+
+      // 3. Remove the trustline. Sponsored lines were unwrapped above; if the
+      //    unwrap failed on-chain this operation fails, which is the safe
+      //    outcome (the account is not merged).
+      if (!isSponsored || sponsoredTrustlines.some((s) => s.asset_code === line.asset_code && s.asset_issuer === line.asset_issuer)) {
+        builder.addOperation(
+          StellarSdk.Operation.changeTrust({
+            asset: new StellarSdk.Asset(line.asset_code, line.asset_issuer),
+            limit: "0",
+          })
+        );
+        operations.push({ type: "removeTrustline", asset: assetString });
+      }
+    }
+
+    // 4. Remove extra signers and data entries so the merge isn't blocked by
+    //    subentries that would otherwise keep the account alive.
+    if (params.removeSigners !== false) {
+      const signers = (validated.signers ?? []).filter((s) => s.key !== accountId);
+      for (const signer of signers) {
+        builder.addOperation(
+          StellarSdk.Operation.setOptions({
+            signer: { ed25519PublicKey: signer.key, weight: 0 },
+          })
+        );
+        operations.push({ type: "removeSigner", signer: signer.key });
+      }
+    }
+    if (params.removeData !== false) {
+      const dataKeys = Object.keys(
+        (sourceAccount as unknown as { data_attr?: Record<string, string> }).data_attr ?? {}
+      );
+      for (const key of dataKeys) {
+        builder.addOperation(StellarSdk.Operation.manageData({ name: key, value: null }));
+        operations.push({ type: "removeData", name: key });
+      }
+    }
+
+    // 5. Merge last — this deletes the source account and sends the remaining
+    //    XLM (including recovered reserves) to the destination.
+    builder.addOperation(StellarSdk.Operation.accountMerge({ destination }));
+    operations.push({ type: "accountMerge", destination });
+
+    const tx = builder.setTimeout(BUILD_TIMEOUT_SECONDS).build();
+    await this.recordBuilt(tx, {
+      kind: "close-account",
+      params: { account: accountId, destination, operationCount: operations.length },
+    });
+
+    return {
+      ...describeUnsignedTransaction(tx, this.networkPassphrase),
+      operations,
+      operationCount: operations.length,
+    };
+  }
+
+  /**
+   * Dry-run a close-account build: reports reserve recovery and any blocking
+   * conditions without submitting. Uses Horizon's transaction simulation when
+   * available; falls back to a static analysis of the account state.
+   */
+  async dryRunCloseAccount(params: {
+    account: string;
+    destination: string;
+    convertAssets?: string[];
+    sendAssets?: string[];
+    removeSigners?: boolean;
+    removeData?: boolean;
+    slippageBps?: number;
+  }): Promise<CloseAccountDryRun> {
+    const build = await this.buildCloseAccountTransaction(params);
+    const sourceAccount = await this.getAccount(params.account);
+    const validated = validateHorizonAccountReserves(sourceAccount, this.maxResponseBytes);
+
+    const blocking: CloseAccountBlockingCondition[] = [];
+    const balances = validateHorizonAccountBalances(sourceAccount, this.maxResponseBytes);
+    for (const line of balances) {
+      if (line.asset_type !== "credit_alphanum4" && line.asset_type !== "credit_alphanum12") continue;
+      if (toStroops(line.balance) > 0n) {
+        const assetString = `${line.asset_code}:${line.asset_issuer}`;
+        const handled =
+          (params.convertAssets ?? []).includes(assetString) ||
+          (params.sendAssets ?? []).length === 0 ||
+          (params.sendAssets ?? []).includes(assetString);
+        if (!handled) {
+          blocking.push({
+            code: "BALANCE_NOT_DRAINED",
+            message: `Asset ${assetString} has a non-zero balance and is not being drained.`,
+          });
+        }
+      }
+    }
+
+    const native = balances.find(
+      (b): b is Extract<ValidatedHorizonBalanceLine, { asset_type: "native" }> =>
+        b.asset_type === "native"
+    );
+    const entries =
+      2n +
+      BigInt(validated.subentry_count) +
+      BigInt(validated.num_sponsoring ?? 0) -
+      BigInt(validated.num_sponsored ?? 0);
+    const reserve = entries * toStroops(BASE_RESERVE);
+    const recovered = native ? toStroops(native.balance) - toStroops(native.selling_liabilities ?? "0") : 0n;
+
+    let simulation: CloseAccountSimulation | undefined;
+    try {
+      const tx = new StellarSdk.Transaction(build.xdr, this.networkPassphrase);
+      const response = await this.server
+        .transactions()
+        .transaction(tx.hash().toString("hex"))
+        .call();
+      simulation = {
+        available: true,
+        successful: (response as { successful?: boolean }).successful ?? false,
+      };
+    } catch (err) {
+      if (isUpstreamValidationFailure(err)) throw err;
+      simulation = { available: false };
+    }
+
+    return {
+      xdr: build.xdr,
+      networkPassphrase: build.networkPassphrase,
+      operations: build.operations,
+      operationCount: build.operationCount,
+      reserveRecovered: fromStroops(recovered > 0n ? recovered : 0n),
+      estimatedReserve: fromStroops(reserve),
+      blocking,
+      canClose: blocking.length === 0,
+      simulation,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Issue #289 – Claimable balances: list with evaluated predicates, claim
+  //  (creating the trustline if needed) and reclaim.
+  // ---------------------------------------------------------------------------
+
+  async listClaimableBalances(account: string): Promise<ClaimableBalanceList> {
+    assertGAddress(account, "account");
+    let records: StellarSdk.Horizon.ServerApi.ClaimableBalanceRecord[];
+    try {
+      const page = await this.server.claimableBalances().claimant(account).limit(200).call();
+      records = (page as { records?: StellarSdk.Horizon.ServerApi.ClaimableBalanceRecord[] })
+        .records ?? [];
+    } catch (err) {
+      if (hasResponseStatus(err, 404)) return { balances: [] };
+      throw translateHorizonTransportError(err);
+    }
+
+    const now = Date.now();
+    const balances: ClaimableBalanceInfo[] = records.map((record) => {
+      const predicate = evaluateClaimPredicate(record);
+      return {
+        id: record.id,
+        asset: record.asset,
+        amount: record.amount,
+        sponsor: record.sponsor,
+        lastModifiedLedger: record.last_modified_ledger,
+        claimants: (record.claimants ?? []).map((c) => ({
+          destination: c.destination,
+          predicate: c.predicate,
+        })),
+        claimableNow: predicate.claimableNow,
+        claimableAfter: predicate.claimableAfter,
+        claimableBefore: predicate.claimableBefore,
+      };
+    });
+
+    return { balances, evaluatedAt: new Date(now).toISOString() };
+  }
+
+  async buildClaimClaimableBalanceTransaction(params: {
+    account: string;
+    balanceId: string;
+  }): Promise<ClaimClaimableBalanceBuild> {
+    const { account: accountId, balanceId } = params;
+    assertGAddress(accountId, "account");
+    if (!/^[0-9a-f]{72}$/.test(balanceId)) {
+      throw new AppError("balanceId must be a 72-character hex claimable balance id", {
+        code: "CLAIMABLE_BALANCE_INVALID_ID",
+        status: 400,
+      });
+    }
+
+    const sourceAccount = await this.getAccount(accountId);
+    const record = await this.loadClaimableBalance(balanceId);
+    const asset = parseAsset(record.asset);
+    const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: await this.currentBaseFee(),
+      networkPassphrase: this.networkPassphrase,
+    });
+
+    let createdTrustline = false;
+    if (!asset.isNative() && asset.getIssuer() !== accountId) {
+      const trustline = findTrustline(sourceAccount, asset, this.maxResponseBytes);
+      if (!trustline) {
+        builder.addOperation(
+          StellarSdk.Operation.changeTrust({
+            asset,
+            limit: "922337203685.4775807",
+          })
+        );
+        createdTrustline = true;
+      }
+    }
+
+    builder.addOperation(StellarSdk.Operation.claimClaimableBalance({ balanceId }));
+    const tx = builder.setTimeout(BUILD_TIMEOUT_SECONDS).build();
+    await this.recordBuilt(tx, {
+      kind: "claim-claimable-balance",
+      params: { account: accountId, balanceId, createdTrustline },
+    });
+
+    return {
+      ...describeUnsignedTransaction(tx, this.networkPassphrase),
+      balanceId,
+      asset: record.asset,
+      amount: record.amount,
+      createdTrustline,
+    };
+  }
+
+  async buildReclaimClaimableBalanceTransaction(params: {
+    account: string;
+    balanceId: string;
+  }): Promise<ClaimClaimableBalanceBuild> {
+    const { account: accountId, balanceId } = params;
+    assertGAddress(accountId, "account");
+    if (!/^[0-9a-f]{72}$/.test(balanceId)) {
+      throw new AppError("balanceId must be a 72-character hex claimable balance id", {
+        code: "CLAIMABLE_BALANCE_INVALID_ID",
+        status: 400,
+      });
+    }
+
+    const sourceAccount = await this.getAccount(accountId);
+    const record = await this.loadClaimableBalance(balanceId);
+    if (record.sponsor && record.sponsor !== accountId) {
+      throw new AppError("Only the sponsor can reclaim this claimable balance", {
+        code: "CLAIMABLE_BALANCE_NOT_SPONSOR",
+        status: 403,
+      });
+    }
+
+    const asset = parseAsset(record.asset);
+    const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
+      fee: await this.currentBaseFee(),
+      networkPassphrase: this.networkPassphrase,
+    });
+
+    let createdTrustline = false;
+    if (!asset.isNative() && asset.getIssuer() !== accountId) {
+      const trustline = findTrustline(sourceAccount, asset, this.maxResponseBytes);
+      if (!trustline) {
+        builder.addOperation(
+          StellarSdk.Operation.changeTrust({
+            asset,
+            limit: "922337203685.4775807",
+          })
+        );
+        createdTrustline = true;
+      }
+    }
+
+    builder.addOperation(StellarSdk.Operation.claimClaimableBalance({ balanceId }));
+    const tx = builder.setTimeout(BUILD_TIMEOUT_SECONDS).build();
+    await this.recordBuilt(tx, {
+      kind: "reclaim-claimable-balance",
+      params: { account: accountId, balanceId, createdTrustline },
+    });
+
+    return {
+      ...describeUnsignedTransaction(tx, this.networkPassphrase),
+      balanceId,
+      asset: record.asset,
+      amount: record.amount,
+      createdTrustline,
+    };
+  }
+
+  private async loadOpenOffers(
+    accountId: string
+  ): Promise<Array<{ id: string; selling: string; buying: string; price: string }>> {
+    try {
+      const page = await this.server.offers().forAccount(accountId).limit(200).call();
+      const records = (page as { records?: Array<StellarSdk.Horizon.ServerApi.OfferRecord> }).records ?? [];
+      return records.map((offer) => ({
+        id: offer.id,
+        selling: assetToString(offer.selling),
+        buying: assetToString(offer.buying),
+        price: offer.price,
+      }));
+    } catch (err) {
+      if (hasResponseStatus(err, 404)) return [];
+      throw translateHorizonTransportError(err);
+    }
+  }
+
+  private async loadClaimableBalance(
+    balanceId: string
+  ): Promise<StellarSdk.Horizon.ServerApi.ClaimableBalanceRecord> {
+    try {
+      return await this.server.claimableBalances().claimableBalance(balanceId).call();
+    } catch (err) {
+      if (hasResponseStatus(err, 404)) {
+        throw new NotFoundError(`Claimable balance ${balanceId} was not found`, "CLAIMABLE_BALANCE_NOT_FOUND");
+      }
+      throw translateHorizonTransportError(err);
+    }
+  }
+}
+
+/** One operation in a close-account build, for display before signing. */
+export interface CloseAccountOperationSummary {
+  type:
+    | "cancelOffer"
+    | "revokeSponsorship"
+    | "convertBalance"
+    | "sendBalance"
+    | "removeTrustline"
+    | "removeSigner"
+    | "removeData"
+    | "accountMerge";
+  asset?: string;
+  amount?: string;
+  offerId?: string;
+  selling?: string;
+  buying?: string;
+  expectedXlm?: string;
+  minXlm?: string;
+  signer?: string;
+  name?: string;
+  sponsor?: string;
+  destination?: string;
+}
+
+export interface CloseAccountBuild extends UnsignedTransactionInfo {
+  operations: CloseAccountOperationSummary[];
+  operationCount: number;
+}
+
+export interface CloseAccountBlockingCondition {
+  code: "BALANCE_NOT_DRAINED" | "SPONSORED_TRUSTLINE" | "NO_PATH";
+  message: string;
+}
+
+export interface CloseAccountSimulation {
+  available: boolean;
+  successful?: boolean;
+}
+
+export interface CloseAccountDryRun {
+  xdr: string;
+  networkPassphrase: string;
+  operations: CloseAccountOperationSummary[];
+  operationCount: number;
+  reserveRecovered: string;
+  estimatedReserve: string;
+  blocking: CloseAccountBlockingCondition[];
+  canClose: boolean;
+  simulation?: CloseAccountSimulation;
+}
+
+export interface ClaimableBalanceInfo {
+  id: string;
+  asset: string;
+  amount: string;
+  sponsor?: string;
+  lastModifiedLedger: number;
+  claimants: Array<{ destination: string; predicate: unknown }>;
+  claimableNow: boolean;
+  claimableAfter?: string;
+  claimableBefore?: string;
+}
+
+export interface ClaimableBalanceList {
+  balances: ClaimableBalanceInfo[];
+  evaluatedAt: string;
+}
+
+export interface ClaimClaimableBalanceBuild extends UnsignedTransactionInfo {
+  balanceId: string;
+  asset: string;
+  amount: string;
+  createdTrustline: boolean;
+}
+
+/**
+ * Evaluates a claimable balance's claimants' predicates relative to now.
+ * Returns whether the balance is claimable now and the absolute timestamps
+ * bounding the claim window (if any).
+ */
+export function evaluateClaimPredicate(record: {
+  claimants?: Array<{ predicate?: unknown }>;
+}): { claimableNow: boolean; claimableAfter?: string; claimableBefore?: string } {
+  const now = Math.floor(Date.now() / 1000);
+  let claimableNow = false;
+  let claimableAfter: number | undefined;
+  let claimableBefore: number | undefined;
+
+  for (const claimant of record.claimants ?? []) {
+    const window = predicateWindow(claimant.predicate);
+    if (window.after !== undefined) {
+      claimableAfter = claimableAfter === undefined ? window.after : Math.min(claimableAfter, window.after);
+    }
+    if (window.before !== undefined) {
+      claimableBefore = claimableBefore === undefined ? window.before : Math.max(claimableBefore, window.before);
+    }
+    if (window.claimableNow) claimableNow = true;
+  }
+
+  return {
+    claimableNow,
+    claimableAfter: claimableAfter !== undefined ? new Date(claimableAfter * 1000).toISOString() : undefined,
+    claimableBefore: claimableBefore !== undefined ? new Date(claimableBefore * 1000).toISOString() : undefined,
+  };
+}
+
+function predicateWindow(predicate: unknown): { claimableNow: boolean; after?: number; before?: number } {
+  if (!predicate || typeof predicate !== "object") return { claimableNow: false };
+  const p = predicate as Record<string, unknown>;
+  const now = Math.floor(Date.now() / 1000);
+
+  if (p.unconditional === true) return { claimableNow: true };
+
+  if (typeof p.not === "object" && p.not !== null) {
+    const inner = predicateWindow((p.not as Record<string, unknown>).abs_before ?? p.not);
+    return { claimableNow: !inner.claimableNow };
+  }
+
+  if (typeof p.abs_before === "string") {
+    const before = Math.floor(Date.parse(p.abs_before) / 1000);
+    return { claimableNow: now < before, before };
+  }
+
+  if (typeof p.abs_before_epoch === "string") {
+    const before = Number(p.abs_before_epoch);
+    return { claimableNow: now < before, before };
+  }
+
+  if (typeof p.and === "object" && p.and !== null) {
+    const parts = p.and as Record<string, unknown>;
+    const left = predicateWindow(parts[0] ?? parts.left);
+    const right = predicateWindow(parts[1] ?? parts.right);
+    return {
+      claimableNow: left.claimableNow && right.claimableNow,
+      after: left.after ?? right.after,
+      before: left.before ?? right.before,
+    };
+  }
+
+  if (typeof p.or === "object" && p.or !== null) {
+    const parts = p.or as Record<string, unknown>;
+    const left = predicateWindow(parts[0] ?? parts.left);
+    const right = predicateWindow(parts[1] ?? parts.right);
+    return {
+      claimableNow: left.claimableNow || right.claimableNow,
+      after: left.after ?? right.after,
+      before: left.before ?? right.before,
+    };
+  }
+
+  return { claimableNow: false };
+}
+
+function assertGAddress(value: string, field: string): void {
+  if (!_isGAddress(value)) {
+    throw new AppError(`${field} must be a valid Stellar account address`, {
+      code: "VALIDATION_ERROR",
+      status: 400,
+      details: { field },
+    });
+  }
+}
+
+function assertAssetString(value: string, field: string): void {
+  if (value === "XLM" || value === "native") return;
+  const [code, issuer] = value.split(":");
+  if (!code || !issuer || !_isGAddress(issuer)) {
+    throw new AppError(`${field} must be "XLM" or "CODE:ISSUER"`, {
+      code: "VALIDATION_ERROR",
+      status: 400,
+      details: { field },
+    });
+  }
+}
+
+function assetToString(asset: { asset_type?: string; asset_code?: string; asset_issuer?: string }): string {
+  if (asset.asset_type === "native") return "XLM";
+  return `${asset.asset_code}:${asset.asset_issuer}`;
 }
 
 // ---------------------------------------------------------------------------

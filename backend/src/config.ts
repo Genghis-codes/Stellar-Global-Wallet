@@ -295,6 +295,74 @@ const envSchema = z.object({
   // the same guarantee across instances — see docs/concurrency.md.
   LOCK_BACKEND: z.enum(["in-process", "redis"]).default("in-process"),
 
+  // #292 — channel account pool for high-throughput sponsored submissions.
+  //
+  // Sponsored (fee-bumped) submissions used to serialise on a single source
+  // account, capping throughput at one transaction per ledger. The pool gives
+  // each in-flight submission its own leased channel account so up to
+  // CHANNEL_POOL_SIZE transactions can land per ledger.
+  //
+  // Threat model: channel secret keys are the only signing authority the pool
+  // holds; they can only spend their own account's XLM (fees are paid by the
+  // treasury via fee-bump), so a leak is bounded to the channel balances.
+  // Prefer CHANNEL_ACCOUNTS_KMS_KEY_ID so raw seeds never live in env.
+  //
+  // Failure modes: when the pool is disabled or exhausted, submissions fall
+  // back to the legacy single-source path (serialised, still correct).
+  CHANNEL_POOL_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
+  // Number of channel accounts in the pool. Each leased channel allows one
+  // in-flight transaction, so this is the effective per-ledger throughput.
+  CHANNEL_POOL_SIZE: z.coerce.number().int().positive().max(100).default(4),
+  // Comma-separated Stellar secret seeds (S...) for the channel accounts.
+  // Must contain at least CHANNEL_POOL_SIZE entries when the pool is enabled
+  // and no KMS reference is configured. Parsed into an array below.
+  CHANNEL_ACCOUNT_SECRETS: z
+    .string()
+    .optional()
+    .transform((raw, ctx) => {
+      if (raw === undefined || raw.trim() === "") return [] as string[];
+      const seeds = raw
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+      for (const seed of seeds) {
+        if (!/^S[A-Z2-7]{55}$/.test(seed)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `CHANNEL_ACCOUNT_SECRETS entry is not a Stellar secret seed (S...): ${seed.slice(0, 4)}...`,
+          });
+          return z.NEVER;
+        }
+      }
+      return seeds;
+    }),
+  // Alternative to CHANNEL_ACCOUNT_SECRETS: a KMS key alias/ARN whose secret
+  // payload is a JSON array of channel seeds. Takes precedence when set.
+  CHANNEL_ACCOUNTS_KMS_KEY_ID: z.string().optional(),
+  // Region for CHANNEL_ACCOUNTS_KMS_KEY_ID; falls back to SPONSOR_KMS_REGION.
+  CHANNEL_ACCOUNTS_KMS_REGION: z.string().optional(),
+  // A channel account below this XLM balance is topped up before use.
+  CHANNEL_MIN_XLM_BALANCE: z.coerce.number().positive().default(2),
+  // Amount of XLM sent from the treasury to top a channel back up.
+  CHANNEL_TOPUP_XLM: z.coerce.number().positive().default(10),
+  // How long a channel lease is held before it is considered abandoned and
+  // reclaimed (covers a stuck submission). Must exceed a ledger close.
+  CHANNEL_LEASE_TTL_MS: z.coerce.number().int().positive().default(30_000),
+  // Treasury account that fee-bumps channel transactions and funds top-ups.
+  // Either a raw secret seed (dev/test only) or a KMS reference.
+  TREASURY_SECRET: z
+    .string()
+    .regex(/^S[A-Z2-7]{55}$/, "must be a Stellar secret seed (S...)")
+    .optional(),
+  TREASURY_KMS_KEY_ID: z.string().optional(),
+  // Region for TREASURY_KMS_KEY_ID; falls back to SPONSOR_KMS_REGION.
+  TREASURY_KMS_REGION: z.string().optional(),
+  // How often the pool monitor checks channel balances, in milliseconds.
+  CHANNEL_MONITOR_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+
   // Soroban RPC is a distinct protocol/endpoint from Horizon (simulate/send/
   // getTransaction vs. classic submitTransaction) and testnet/mainnet often
   // run it on a different host, so it gets its own client config rather than
@@ -480,6 +548,28 @@ const envSchema = z.object({
 });
 
 export const config = envSchema.parse(process.env);
+
+// #292 — cross-field validation for the channel pool. Kept outside the zod
+// object so the error message can name the exact missing setting.
+if (config.CHANNEL_POOL_ENABLED) {
+  const hasSecrets = config.CHANNEL_ACCOUNT_SECRETS.length > 0;
+  const hasKms = Boolean(config.CHANNEL_ACCOUNTS_KMS_KEY_ID);
+  if (!hasSecrets && !hasKms) {
+    throw new Error(
+      "CHANNEL_POOL_ENABLED=true requires CHANNEL_ACCOUNT_SECRETS or CHANNEL_ACCOUNTS_KMS_KEY_ID"
+    );
+  }
+  if (hasSecrets && config.CHANNEL_ACCOUNT_SECRETS.length < config.CHANNEL_POOL_SIZE) {
+    throw new Error(
+      `CHANNEL_ACCOUNT_SECRETS has ${config.CHANNEL_ACCOUNT_SECRETS.length} entries but CHANNEL_POOL_SIZE is ${config.CHANNEL_POOL_SIZE}`
+    );
+  }
+  if (!config.TREASURY_SECRET && !config.TREASURY_KMS_KEY_ID) {
+    throw new Error(
+      "CHANNEL_POOL_ENABLED=true requires TREASURY_SECRET or TREASURY_KMS_KEY_ID for fee-bumps and top-ups"
+    );
+  }
+}
 
 // Read the package version once at boot. Resolved relative to this file so it
 // works both under ts-node (src/) and compiled output (dist/).

@@ -64,6 +64,32 @@ Same flow as Scenario B but all VUs share a single wallet ID. This directly exer
 
 Run Scenario B at 50 VUs for 10 minutes. Monitors for error rate drift over time (memory leaks, connection pool exhaustion).
 
+### Scenario E — Channel-account pool throughput
+
+Exercises the sponsored-submission channel pool (see issue #292). The pool leases a channel account per submission and fee-bumps from the treasury, so throughput should scale with the number of channels rather than serialising on a single source account.
+
+Setup:
+1. Configure the backend with `CHANNEL_POOL_SIZE=N` (see `backend/.env.example`) and fund each channel account above the top-up threshold.
+2. Pre-seed one sponsored wallet per VU (or reuse a small set — the pool, not the wallet, is the contention point).
+3. Run `scenarios/channel-pool.js` with `CHANNEL_POOL_SIZE` matching the backend config.
+
+Each VU:
+1. `POST /wallet/:id/transactions/build` (sponsored path).
+2. Sign the XDR.
+3. `POST /wallet/:id/transactions/submit`.
+
+Expected result: **N channels ⇒ ~N transactions per ledger.** The scenario asserts this by reading the `X-Channel-Lease-Wait-Ms` and `X-Fee-Bump-Status` response headers and counting distinct channel accounts observed in the summary export.
+
+Run against a staging deployment (not quickstart) so the treasury account, channel funding and Horizon rate limits match production:
+
+```bash
+cd backend/load-tests
+K6_BASE_URL=https://staging.example.com \
+CHANNEL_POOL_SIZE=8 \
+k6 run scenarios/channel-pool.js \
+  --summary-export=results/channel-pool-summary.json
+```
+
 ---
 
 ## Budget Gates (thresholds)
@@ -82,8 +108,17 @@ thresholds: {
 
   // Submission-specific
   'checks{type:submission_success}': ['rate>0.95'],                // > 95 % submitted OK
+
+  // Channel-account pool (Scenario E)
+  'http_req_duration{scenario:channel_pool}': ['p(95)<2500'],
+  'http_req_failed{scenario:channel_pool}': ['rate<0.01'],
+  'channel_lease_wait_ms': ['p(95)<250'],                          // 250 ms p95 lease wait
+  'fee_bump_failure_rate': ['rate<0.005'],                         // < 0.5 % fee-bump failures
+  'checks{type:channel_parallelism}': ['rate>0.95'],               // ~N tx/ledger achieved
 }
 ```
+
+`channel_lease_wait_ms` is a custom trend fed from the `X-Channel-Lease-Wait-Ms` response header; `fee_bump_failure_rate` is a custom rate incremented when `X-Fee-Bump-Status` is not `success`. The `channel_parallelism` check compares observed distinct channel accounts per ledger against `CHANNEL_POOL_SIZE` and passes when at least 95 % of the configured channels are used concurrently.
 
 Adjust these values after the baseline run from Scenario A.
 
@@ -133,6 +168,7 @@ backend/load-tests/
     concurrent-ramp.js                ← Scenario B
     shared-wallet-contention.js       ← Scenario C
     sustained-error-rate.js           ← Scenario D
+    channel-pool.js                   ← Scenario E (channel-account pool)
   config/
     thresholds.js                     ← shared budget gates
     test-data.js                      ← wallet IDs, key fixtures
@@ -174,9 +210,11 @@ The `k6-action` exits non-zero when any threshold is breached, so the job fails 
 - [ ] Add `backend/load-tests/scenarios/concurrent-ramp.js` (Scenario B)
 - [ ] Add `backend/load-tests/scenarios/shared-wallet-contention.js` (Scenario C)
 - [ ] Add `backend/load-tests/scenarios/sustained-error-rate.js` (Scenario D)
+- [ ] Add `backend/load-tests/scenarios/channel-pool.js` (Scenario E)
 - [ ] Add `backend/load-tests/config/thresholds.js` with budget gates
 - [ ] Add `X-Lock-Wait-Ms` response header in backend build/submit middleware
-- [ ] Add `lock_wait_ms` OTel histogram metric
+- [ ] Add `X-Channel-Lease-Wait-Ms` and `X-Fee-Bump-Status` response headers in sponsored submit path
+- [ ] Add `lock_wait_ms`, `channel_lease_wait_ms` OTel histograms and `fee_bump_failure_rate` counter
 - [ ] Add CI workflow job with artifact upload
 - [ ] Update README with instructions to run load tests locally
 - [ ] Update docs where load-test behaviour or thresholds are described
@@ -196,11 +234,25 @@ k6 run scenarios/concurrent-ramp.js \
   --out json=results/raw.json
 ```
 
+Channel-pool scenario (Scenario E) against staging:
+
+```bash
+cd backend/load-tests
+K6_BASE_URL=https://staging.example.com \
+CHANNEL_POOL_SIZE=8 \
+k6 run scenarios/channel-pool.js \
+  --summary-export=results/channel-pool-summary.json \
+  --out json=results/channel-pool-raw.json
+```
+
+Set `CHANNEL_POOL_SIZE` to the same value as the backend's `CHANNEL_POOL_SIZE` so the parallelism check has the right target. Run with at least two pool sizes (e.g. 1 and 8) to confirm throughput scales roughly linearly with the number of channels.
+
 ---
 
 ## Definition of Done
 
 - [ ] Code merged to `main` with all scenarios passing their budgets
 - [ ] All acceptance criteria checked (submission path load-tested, CI green, no unlinked TODOs)
-- [ ] PR description links this issue (`Closes #235`) and lists any deferred work
+- [ ] Channel-pool scenario demonstrates ~N tx/ledger for N channels on staging
+- [ ] PR description links this issue (`Closes #235`, `Closes #292`) and lists any deferred work
 - [ ] Docs updated where load-test behaviour changed
