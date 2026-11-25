@@ -423,11 +423,9 @@ export async function ensureRlsPolicies(db: Queryable = rawPool): Promise<void> 
 export async function ensureAuditTable(db: Queryable = rawPool) {
   // #219 — run managed migrations before legacy idempotent checks
   if (db === rawPool) {
-    try {
-      await runMigrations(rawPool, "up");
-    } catch (err) {
-      console.error("[migrations] Error executing migrations:", err);
-    }
+    // A failed migration leaves the schema in an unknown state; refuse to
+    // boot rather than serve traffic against it.
+    await runMigrations(rawPool, "up");
   }
   await db.query(`
     CREATE TABLE IF NOT EXISTS keypair_audit_log (
