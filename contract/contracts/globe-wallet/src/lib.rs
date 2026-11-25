@@ -3298,7 +3298,7 @@ mod tests {
         //    queued and only takes effect after the delay.
         client.set_spend_limit(&user, &code_token, &0_i128);
         assert_eq!(client.get_spend_limit(&user, &code_token), 900_000);
-        assert!(client.pending_spend_limit(&user, &code).is_some());
+        assert!(client.pending_spend_limit(&user, &code_token).is_some());
         env.ledger()
             .with_mut(|l| l.timestamp += SPEND_LIMIT_INCREASE_DELAY_SECS);
         assert_eq!(client.get_spend_limit(&user, &code_token), 0);
@@ -5418,12 +5418,10 @@ mod tests {
         let token_admin = Address::generate(&env);
         let user = Address::generate(&env);
         let to = Address::generate(&env);
-        let _code = String::from_str(&env, "XLM");
-        let code_token = Address::generate(&env);
         let (token_id, token_admin_client, token) = create_allowed_token(&env, &client, &admin, &token_admin);
         token_admin_client.mint(&user, &1_000);
 
-        client.set_spend_limit(&user, &code_token, &100_i128);
+        client.set_spend_limit(&user, &token_id, &100_i128);
 
         env.ledger().with_mut(|l| l.sequence_number = 100);
         wrapper_client.approve(&user, &wallet_id, &token_id, &500, &10_000, &None);
@@ -6022,13 +6020,12 @@ mod tests {
     fn test_archived_spend_limit_fails_safe() {
         let (env, cid, _admin, client) = setup();
         let user = Address::generate(&env);
-        let code = String::from_str(&env, "XLM");
         let code_token = Address::generate(&env);
         client.set_spend_limit(&user, &code_token, &100_i128);
         env.as_contract(&cid, || {
             env.storage()
                 .persistent()
-                .remove(&DataKey::SpendLimit(user.clone(), code.clone()));
+                .remove(&DataKey::TokenSpendLimit(user.clone(), code_token.clone()));
         });
         assert!(client.is_limit_archived(&user, &code_token));
         assert_eq!(
@@ -6047,18 +6044,29 @@ mod tests {
     fn test_cleared_limit_removes_opt_in_marker() {
         let (env, cid, _admin, client) = setup();
         let user = Address::generate(&env);
-        let code = String::from_str(&env, "XLM");
         let code_token = Address::generate(&env);
         client.set_spend_limit(&user, &code_token, &100_i128);
+        // Clearing is an increase (#176): queued, so the marker survives
+        // until the delay elapses and the pending limit is promoted.
         client.set_spend_limit(&user, &code_token, &0_i128);
+        env.as_contract(&cid, || {
+            assert!(env
+                .storage()
+                .persistent()
+                .has(&DataKey::LimitOptIn(user.clone(), code_token.clone())));
+        });
+        env.ledger()
+            .with_mut(|l| l.timestamp += SPEND_LIMIT_INCREASE_DELAY_SECS);
+        client.record_spend(&user, &code_token, &1_i128);
         env.as_contract(&cid, || {
             assert!(!env
                 .storage()
                 .persistent()
                 .has(&DataKey::LimitOptIn(user.clone(), code_token.clone())));
-            env.storage()
+            assert!(!env
+                .storage()
                 .persistent()
-                .remove(&DataKey::SpendLimit(user.clone(), code.clone()));
+                .has(&DataKey::TokenSpendLimit(user.clone(), code_token.clone())));
         });
         // Never opted in (any more) → missing entry really means unlimited.
         assert!(!client.is_limit_archived(&user, &code_token));
@@ -6067,14 +6075,16 @@ mod tests {
 
     #[test]
     fn test_extend_user_ttl_keeps_entries_alive() {
-        let (env, _cid, _admin, client) = setup();
+        let (env, _cid, admin, client) = setup();
         let user = Address::generate(&env);
-        let _code = String::from_str(&env, "XLM");
-        let code_token = Address::generate(&env);
+        // extend_user_ttl walks the allowlisted tokens (spend state is
+        // token-keyed), so the limit must be on an allowlisted token.
+        let token_admin = Address::generate(&env);
+        let (code_token, _, _) = create_allowed_token(&env, &client, &admin, &token_admin);
         client.add_asset(&user, &xlm(&env));
         client.set_spend_limit(&user, &code_token, &1_000_i128);
         client.record_spend(&user, &code_token, &10_i128);
-        // UserAssets + SpendLimit + LimitOptIn + DailySpent
+        // UserAssets + TokenSpendLimit + LimitOptIn + SpendWindow
         assert_eq!(client.extend_user_ttl(&user), 4);
         for _ in 0..3 {
             env.ledger().with_mut(|l| l.sequence_number += GlobeWallet::KEEPER_INTERVAL_LEDGERS);
