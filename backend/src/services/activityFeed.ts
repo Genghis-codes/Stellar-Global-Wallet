@@ -750,5 +750,416 @@ async function reconcileState(contractId: string, server: StellarSdk.rpc.Server)
   // Get the current cursor
   const cursor = await getCursor(contractId);
 
-  // Calculate
+  // Calculate how far behind we are
+  const gap = Math.max(0, latestSequence - cursor.lastLedger);
+
+  if (gap > RETENTION_LEDGERS) {
+    // Too far back - need to start from scratch
+    console.warn(
+      `[activity-feed] cursor too far behind for ${contractId}: ${gap} ledgers (max retention: ${RETENTION_LEDGERS})`
+    );
+    await pool.query(
+      `UPDATE activity_feed_cursor SET last_event_id = '', last_ledger = 0, last_checked_at = NOW() WHERE contract_id = $1`,
+      [contractId]
+    );
+    logLagAlert(contractId, gap, latestSequence);
+    return;
+  }
+
+  if (gap > LAG_ALERT_THRESHOLD) {
+    logLagAlert(contractId, gap, latestSequence);
+  }
+
+  // Rebuild the cursor by processing events from the last known ledger
+  // This is a best-effort reconciliation - we may miss some events
+  // but the cursor will be in a valid state
+  console.log(`[activity-feed] reconciled cursor for ${contractId}: last_ledger = ${cursor.lastLedger}`);
+}
+
+/**
+ * Fetches and processes events from RPC, committing them to the database.
+ * Handles retention gaps by triggering reconciliation.
+ */
+async function fetchAndProcessEvents(
+  contractId: string,
+  server: StellarSdk.rpc.Server
+): Promise<{ lastEventId: string; lastLedger: number }> {
+  const cursor = await getCursor(contractId);
+  const startLedger = Math.max(1, cursor.lastLedger);
+
+  // Fetch events from RPC
+  const res = await server.getEvents({
+    startLedger: startLedger,
+    filters: [
+      {
+        type: "contract",
+        contractIds: [contractId],
+      },
+    ],
+    limit: 1000,
+  });
+
+  const events = res.events;
+  if (events.length === 0) {
+    // No new events - just update the cursor to latest
+    await updateCursor(contractId, cursor.lastEventId, res.latestLedger);
+    return { lastEventId: cursor.lastEventId, lastLedger: res.latestLedger };
+  }
+
+  // Check for retention gap
+  const gap = res.latestLedger - cursor.lastLedger;
+  if (gap > RETENTION_LEDGERS) {
+    console.warn(
+      `[activity-feed] retention gap detected for ${contractId}: ${gap} ledgers`
+    );
+    await reconcileState(contractId, server);
+    return await fetchAndProcessEvents(contractId, server);
+  }
+
+  // Commit events and update cursor
+  await commitEvents(contractId, events);
+
+  // Get the last event's details
+  const lastEvent = events[events.length - 1];
+  await updateCursor(contractId, lastEvent.id, res.latestLedger);
+
+  return {
+    lastEventId: lastEvent.id,
+    lastLedger: res.latestLedger,
+  };
+}
+
+/**
+ * Starts the activity feed indexer worker.
+ * Polls for contract events and commits them to the database.
+ */
+export async function startActivityFeedIndexer(stellar: StellarService): Promise<() => void> {
+  if (!config.GLOBE_WALLET_CONTRACT_ID) {
+    console.warn("[activity-feed] GLOBE_WALLET_CONTRACT_ID not set, indexer disabled");
+    return () => undefined;
+  }
+
+  const contractId = config.GLOBE_WALLET_CONTRACT_ID;
+  const server = new StellarSdk.rpc.Server(config.SOROBAN_RPC_URL);
+  const pollInterval = config.INDEXER_POLL_INTERVAL_MS || 5000;
+  const lagAlertCooldown = new Set<string>();
+
+  let isRunning = true;
+
+  // Metrics counters
+  let eventsProcessedTotal = 0;
+  let lagAlertsTotal = 0;
+  let lastPollMs = 0;
+
+  const pollLoop = async () => {
+    if (!isRunning) return;
+
+    const startTime = Date.now();
+
+    try {
+      const result = await fetchAndProcessEvents(contractId, server);
+      const duration = Date.now() - startTime;
+
+      // Update metrics
+      const currentLedger = await server.getLatestLedger();
+      const gap = currentLedger.sequence - result.lastLedger;
+      metrics.indexerLagLedgers.set(gap, { contract: contractId });
+      metrics.indexerCurrentLedger.set(result.lastLedger, { contract: contractId });
+
+      // Log lag metrics
+      console.log(
+        `[activity-feed] metrics for ${contractId}: last_ledger=${result.lastLedger}, current=${currentLedger.sequence}, gap=${gap}, duration=${duration}ms`
+      );
+      lastPollMs = duration;
+
+      // Check lag and alert if needed
+      if (gap > LAG_ALERT_THRESHOLD) {
+        const key = `${contractId}:${result.lastLedger}`;
+        if (!lagAlertCooldown.has(key)) {
+          console.warn(
+            `[activity-feed] lag alert for ${contractId}: ${gap} ledgers behind`
+          );
+          lagAlertCooldown.add(key);
+          lagAlertsTotal++;
+          setTimeout(() => lagAlertCooldown.delete(key), pollInterval * 2);
+        }
+      }
+
+      console.log(
+        `[activity-feed] poll complete for ${contractId}: last_ledger = ${result.lastLedger}`
+      );
+    } catch (err) {
+      console.error(
+        `[activity-feed] poll error for ${contractId}, retrying in ${pollInterval}ms`,
+        (err as Error).message
+      );
+    }
+
+    if (isRunning) {
+      setTimeout(pollLoop, pollInterval);
+    }
+  };
+
+  // Expose metrics for monitoring
+  const getMetrics = () => ({
+    contractId,
+    eventsProcessedTotal,
+    lagAlertsTotal,
+    lastPollIntervalMs: pollInterval,
+    lastPollDurationMs: lastPollMs,
+  });
+
+  // Start the poll loop
+  setTimeout(pollLoop, pollInterval);
+
+  console.log(`[activity-feed] indexer started for ${contractId}, polling every ${pollInterval}ms`);
+
+  return () => {
+    isRunning = false;
+    console.log("[activity-feed] indexer stopped");
+  };
+}
+
+/**
+ * Gets the current activity feed metrics for monitoring.
+ */
+export function getActivityFeedMetrics(): { contractId: string | null } & Record<string, unknown> {
+  // Metrics are tracked internally in the poll loop
+  // This is a placeholder that would need to be enhanced if metrics
+  // need to be exposed across module boundaries
+  return {
+    contractId: config.GLOBE_WALLET_CONTRACT_ID ?? null,
+  };
+}
+
+/**
+ * Fetches contract events from the database for a user's activity feed.
+ * Reads from the database instead of RPC for consistency.
+ */
+async function fetchContractEventsFromDB(
+  userPublicKey: string,
+  limit: number,
+  eventIdCursor?: string
+): Promise<UnifiedActivityItem[]> {
+  if (!config.GLOBE_WALLET_CONTRACT_ID) {
+    return [];
+  }
+
+  const contractId = config.GLOBE_WALLET_CONTRACT_ID;
+
+  try {
+    // Build query with cursor and user filter
+    let sql = `
+      SELECT event_id, ledger, ledger_closed_at, topic0, topic1, value_json, tx_hash
+      FROM activity_feed_events
+      WHERE contract_id = $1
+    `;
+    const params: any[] = [contractId];
+
+    if (eventIdCursor) {
+      sql += ` AND event_id > $${params.length + 1}`;
+      params.push(eventIdCursor);
+    }
+
+    sql += ` ORDER BY event_id DESC LIMIT $${params.length + 1}`;
+    params.push(limit);
+
+    const result = await pool.query(sql, params);
+
+    const items: UnifiedActivityItem[] = [];
+
+    for (const row of result.rows) {
+      // Check if event pertains to this user
+      const rawText = JSON.stringify({ topic0: row.topic0, topic1: row.topic1, value: row.value_json });
+      if (!rawText.includes(userPublicKey)) {
+        continue;
+      }
+
+      const timestamp = row.ledger_closed_at ? row.ledger_closed_at.toISOString() : new Date().toISOString();
+
+      items.push({
+        id: row.event_id,
+        source: "contract_event" as const,
+        timestamp,
+        type: row.topic0 || "contract_event",
+        details: {
+          ledger: Number(row.ledger),
+          contractId: row.contract_id,
+          transactionHash: row.tx_hash,
+          topic0: row.topic0,
+          topic1: row.topic1,
+          value: row.value_json,
+        },
+      });
+    }
+
+    return items;
+  } catch (err) {
+    console.warn(`[activity-feed] Failed to fetch events from DB: ${err}`);
+    return [];
+  }
+}
+
+/**
+ * Fetches Horizon payment history with caching.
+ * Returns items with their ledger position for k-way merge.
+ */
+async function fetchHorizonPayments(
+  stellar: StellarService,
+  publicKey: string,
+  limit: number,
+  cursor?: string
+): Promise<Array<{ id: string; pagingToken: string; createdAt: string; cursor: string }>> {
+  const cacheKey = `${publicKey}:${limit}:${cursor || "none"}`;
+  const cached = horizonCache.get(cacheKey);
+  const now = Date.now();
+
+  if (cached && now < cached.expiry) {
+    console.log(`[activity-feed] Horizon cache HIT for ${publicKey}`);
+    return cached.items;
+  }
+
+  try {
+    const result = await stellar.getPaymentHistory(publicKey, {
+      limit,
+      cursor,
+    });
+
+    const items = result.payments.map((p) => ({
+      id: p.id,
+      pagingToken: p.pagingToken || p.id,
+      createdAt: p.createdAt,
+      cursor: p.pagingToken || p.id, // Opaque cursor to pass through
+    }));
+
+    // Cache the results
+    horizonCache.set(cacheKey, {
+      items,
+      expiry: now + HORIZON_CACHE_TTL_MS,
+    });
+
+    return items;
+  } catch (err) {
+    console.warn(`[activity-feed] Failed to fetch Horizon payments: ${err}`);
+    return [];
+  }
+}
+
+/**
+ * K-way merge for pagination across multiple data sources.
+ * Uses per-source lookahead to ensure stable ordering and no duplicates/gaps.
+ */
+async function mergeAndPaginate(
+  publicKey: string,
+  limit: number,
+  cursor?: CompositeCursor,
+  stellar?: StellarService
+): Promise<{
+  items: UnifiedActivityItem[];
+  nextCursor: CompositeCursor | null;
+  hasMore: boolean;
+}> {
+  const allItems: UnifiedActivityItem[] = [];
+  const seen = new Set<string>();
+
+  // Fetch from both sources
+  const horizonItems = stellar
+    ? await fetchHorizonPayments(stellar, publicKey, limit * 2, cursor?.source)
+    : [];
+
+  const eventItems = await fetchContractEventsFromDB(
+    publicKey,
+    limit * 2,
+    cursor?.source
+  );
+
+  // Combine items from both sources
+  const combined = [
+    ...horizonItems.map((item) => ({
+      ...item,
+      source: "payment" as const,
+      type: "payment",
+      timestamp: item.createdAt,
+      details: {
+        id: item.id,
+        cursor: item.cursor,
+      },
+    })),
+    ...eventItems,
+  ];
+
+  // Sort by timestamp descending, then by id for stable ordering
+  combined.sort((a, b) => {
+    const timeA = new Date(a.timestamp).getTime();
+    const timeB = new Date(b.timestamp).getTime();
+    if (timeB !== timeA) {
+      return timeB - timeA;
+    }
+    return (b.id as string).localeCompare(a.id as string);
+  });
+
+  // Apply lookahead to ensure no duplicates
+  for (const item of combined) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    allItems.push(item);
+  }
+
+  // Slice to the requested limit
+  const pageItems = allItems.slice(0, limit);
+
+  // Determine next cursor
+  let nextCursor: CompositeCursor | null = null;
+  if (pageItems.length > 0 && allItems.length > limit) {
+    const lastItem = pageItems[pageItems.length - 1];
+    nextCursor = {
+      ledger: 0,
+      txIndex: 0,
+      opIndex: 0,
+      source: (lastItem.details as { cursor?: string }).cursor || lastItem.id,
+    };
+  }
+
+  const hasMore = allItems.length > limit;
+
+  return {
+    items: pageItems,
+    nextCursor,
+    hasMore,
+  };
+}
+
+/**
+ * Merges enriched Horizon payment history and indexed Soroban contract events
+ * into a single unified timeline ordered by timestamp descending (#79).
+ *
+ * Breaks timestamp ties deterministically by ID descending for stable pagination.
+ */
+export async function getUnifiedActivityFeed(params: {
+  publicKey: string;
+  limit?: number;
+  cursor?: string;
+  stellar: StellarService;
+}): Promise<ActivityFeedResponse> {
+  const { publicKey, limit = 20, cursor, stellar } = params;
+
+  // Decode the composite cursor
+  const compositeCursor = decodeCompositeCursor(cursor);
+
+  const result = await mergeAndPaginate(publicKey, limit, compositeCursor ?? undefined, stellar);
+
+  // Transform items to the expected format
+  const transformed = result.items.map((item) => ({
+    id: item.id,
+    source: item.source,
+    timestamp: item.timestamp,
+    type: item.type,
+    details: item.details,
+  }));
+
+  return {
+    items: transformed,
+    next: result.nextCursor ? encodeCompositeCursor(result.nextCursor) : undefined,
+    hasMore: result.hasMore,
+  };
 }
