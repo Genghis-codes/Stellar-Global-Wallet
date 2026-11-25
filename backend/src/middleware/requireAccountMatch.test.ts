@@ -1,65 +1,50 @@
-import express from 'express';
+import express, { NextFunction, Request, Response } from 'express';
+import { Keypair } from '@stellar/stellar-sdk';
 import request from 'supertest';
 import { requireAccountMatch } from './requireAccountMatch';
 
 /**
  * Authz matrix for requireAccountMatch.
  *
- * Each protected route declares exactly one actor field via route metadata
- * (`res.locals.actorField`). The middleware validates only that field, rejects
+ * Each protected route declares exactly one actor field
+ * (`requireAccountMatch('field')`) or a resolver for path-scoped routes. The middleware validates only that field, rejects
  * ambiguous requests that name multiple actor fields with different values,
  * and denies by default when no actor is named.
  */
 
 const ACTOR_FIELDS = ['sourcePublicKey', 'user', 'guardian'] as const;
 
+const OWN = Keypair.random().publicKey();
+const VICTIM = Keypair.random().publicKey();
+
+// Stand-in for jwtAuth: the bearer value is used directly as the subject.
+function fakeAuth(req: Request, _res: Response, next: NextFunction) {
+  const header = req.headers.authorization ?? '';
+  const sub = header.startsWith('Bearer ') ? header.slice(7) : undefined;
+  if (sub) (req as unknown as { user: { sub: string } }).user = { sub };
+  next();
+}
+
 function buildApp() {
   const app = express();
   app.use(express.json());
+  app.use(fakeAuth);
+  const ok = (_req: Request, res: Response) => res.status(200).json({ ok: true });
 
-  // Route that declares `sourcePublicKey` as its actor field.
-  app.post(
-    '/source',
-    (_req, res, next) => {
-      res.locals.actorField = 'sourcePublicKey';
-      next();
-    },
-    requireAccountMatch,
-    (_req, res) => res.status(200).json({ ok: true }),
-  );
-
-  // Route that declares `user` as its actor field.
-  app.post(
-    '/user',
-    (_req, res, next) => {
-      res.locals.actorField = 'user';
-      next();
-    },
-    requireAccountMatch,
-    (_req, res) => res.status(200).json({ ok: true }),
-  );
-
-  // Route that declares `guardian` as its actor field.
-  app.post(
-    '/guardian',
-    (_req, res, next) => {
-      res.locals.actorField = 'guardian';
-      next();
-    },
-    requireAccountMatch,
-    (_req, res) => res.status(200).json({ ok: true }),
-  );
-
+  app.post('/source', requireAccountMatch('sourcePublicKey'), ok);
+  app.post('/user', requireAccountMatch('user'), ok);
+  app.post('/guardian', requireAccountMatch('guardian'), ok);
+  // Path-scoped route: the resolver reads the account from the URL.
+  app.post('/account/:publicKey', requireAccountMatch((req) => req.params.publicKey), ok);
   // Protected route that declares no actor field: must deny by default.
-  app.post('/unprotected', requireAccountMatch, (_req, res) =>
-    res.status(200).json({ ok: true }),
-  );
+  app.post('/unprotected', requireAccountMatch(), ok);
+  // Error handler mapping AppError status codes.
+  app.use((err: { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
+    res.status(err.status ?? 500).json({ error: true });
+  });
 
   return app;
 }
-
-const OWN = 'GOWNACCOUNT000000000000000000000000000000000000000000000000';
-const VICTIM = 'GVICTIMACCOUNT00000000000000000000000000000000000000000000';
 
 function authHeader(account: string) {
   return { Authorization: `Bearer ${account}` };
@@ -121,6 +106,18 @@ describe('requireAccountMatch authz matrix', () => {
         .set(authHeader(OWN))
         .send({ sourcePublicKey: OWN, user: OWN });
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe('path-scoped resolver', () => {
+    it('allows the authenticated account', async () => {
+      const res = await request(app).post(`/account/${OWN}`).set(authHeader(OWN)).send({});
+      expect(res.status).toBe(200);
+    });
+
+    it('rejects another account', async () => {
+      const res = await request(app).post(`/account/${VICTIM}`).set(authHeader(OWN)).send({});
+      expect(res.status).toBe(403);
     });
   });
 

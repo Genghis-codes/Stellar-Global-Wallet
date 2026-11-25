@@ -1,6 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import { Keypair, StrKey } from "@stellar/stellar-sdk";
-import { AccountMismatchError, UnauthorizedError } from "../errors/appError";
+import { AccountMismatchError, AppError, UnauthorizedError } from "../errors/appError";
 
 export type TargetAccountResolver = (req: Request) => string | undefined;
 
@@ -157,9 +157,14 @@ export function assertSignedXdrAccountMatch(
  * ("api-key-user") and are not scoped, matching #88's single-identity model.
  */
 export function requireAccountMatch(
-  actorField?: ActorField,
-  resolve: TargetAccountResolver = (req) => resolveActingAccount(req, actorField)
+  actorFieldOrResolver?: ActorField | TargetAccountResolver
 ) {
+  // Routes scoped by a path parameter (e.g. /:publicKey/...) pass a resolver
+  // function; body/query-scoped routes name the single actor field.
+  const resolve: TargetAccountResolver =
+    typeof actorFieldOrResolver === "function"
+      ? actorFieldOrResolver
+      : (req) => resolveActingAccount(req, actorFieldOrResolver);
   return (req: Request, _res: Response, next: NextFunction) => {
     const sub = req.user?.sub;
     if (!sub) {
@@ -188,7 +193,14 @@ export function requireAccountMatch(
     const target = resolve(req);
     if (target === undefined) {
       // Deny by default: a protected route must name the actor it acts on.
-      next(new UnauthorizedError("Actor account required", "AUTH_HEADER_INVALID"));
+      // The caller is authenticated, so this is a malformed request (400),
+      // not a credential problem (401 would make clients re-authenticate).
+      next(
+        new AppError("Actor account required", {
+          code: "VALIDATION_ERROR",
+          status: 400,
+        })
+      );
       return;
     }
     if (target !== sub) {
