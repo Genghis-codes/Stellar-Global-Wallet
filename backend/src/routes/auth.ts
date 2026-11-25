@@ -191,7 +191,17 @@ interface AccountSigners {
 // in which case the caller falls back to master-key verification.
 async function loadAccountSigners(account: string): Promise<AccountSigners | null> {
   const url = `${config.HORIZON_URL.replace(/\/$/, "")}/accounts/${account}`;
-  const response = await fetch(url);
+  let response: Response;
+  try {
+    // Bounded: a hung Horizon must not hold the token request open forever.
+    response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  } catch {
+    throw new AppError("Unable to load account signers", {
+      code: "SIGNER_LOOKUP_FAILED",
+      status: 502,
+      retryable: true,
+    });
+  }
   if (response.status === 404) {
     return null;
   }
