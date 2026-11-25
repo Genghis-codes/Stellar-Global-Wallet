@@ -134,7 +134,15 @@ export class RedisRefreshTokenStore {
   private async ensureConnected(): Promise<void> {
     if (this.client.isOpen) return;
     if (!this.connectPromise) {
-      this.connectPromise = this.client.connect().then(() => undefined);
+      // Clear the cached promise once it settles: a failed connect must not
+      // be replayed to every later caller, or one Redis blip at startup
+      // would break login/refresh until the process restarts.
+      this.connectPromise = this.client
+        .connect()
+        .then(() => undefined)
+        .finally(() => {
+          this.connectPromise = undefined;
+        });
     }
     await this.connectPromise;
   }
