@@ -112,7 +112,7 @@ authRouter.post(
       assertValidRequest(req);
       const serverKeypair = getServerKeypair();
       const transaction = String(req.body.transaction);
-      const { clientAccountID, clientDomainAccountID } = WebAuth.readChallengeTx(
+      const { tx, clientAccountID } = WebAuth.readChallengeTx(
         transaction,
         serverKeypair.publicKey(),
         networkPassphrase,
@@ -120,10 +120,11 @@ authRouter.post(
         config.WEB_AUTH_DOMAIN
       );
 
-      // SEP-10 requires the challenge to contain exactly one manage_data
-      // operation (the nonce). Anything else is a malformed or malicious
-      // challenge and must be rejected before we look at signatures.
-      assertOnlyNonceOperation(transaction);
+      // SEP-10 challenges may only contain manage_data operations (the
+      // nonce, web_auth_domain and an optional client_domain). Anything
+      // else is malformed or malicious and is rejected before signatures.
+      assertOnlyManageDataOperations(tx);
+      const clientDomainOp = readClientDomainOperation(tx);
 
       // Verify the challenge is signed by the client account. For unfunded
       // accounts the master key is the only signer; funded accounts may be
@@ -154,8 +155,8 @@ authRouter.post(
 
       // If the challenge carries a client_domain, the client_domain signer
       // must be the SIGNING_KEY published in that domain's stellar.toml.
-      if (clientDomainAccountID) {
-        await verifyClientDomain(transaction, clientDomainAccountID);
+      if (clientDomainOp) {
+        await verifyClientDomain(clientDomainOp.domain, clientDomainOp.signer);
       }
 
       const sub = clientAccountID;
@@ -212,12 +213,13 @@ async function loadAccountSigners(account: string): Promise<AccountSigners | nul
   };
 }
 
-// Reject challenges that contain anything other than the single nonce
-// manage_data operation SEP-10 mandates.
-function assertOnlyNonceOperation(transaction: string): void {
-  const tx = new Transaction(transaction, networkPassphrase);
+// Reject challenges containing anything other than manage_data operations.
+// A challenge we build always carries the nonce plus a web_auth_domain
+// operation, so requiring exactly one operation would reject every valid
+// challenge.
+function assertOnlyManageDataOperations(tx: Transaction): void {
   const ops = tx.operations;
-  if (ops.length !== 1 || ops[0].type !== "manageData") {
+  if (ops.length === 0 || ops.some((op) => op.type !== "manageData")) {
     throw new UnauthorizedError(
       "Challenge contains unexpected operations",
       "SEP10_UNEXPECTED_OPERATIONS"
@@ -225,16 +227,25 @@ function assertOnlyNonceOperation(transaction: string): void {
   }
 }
 
+// Extract the optional client_domain manage_data operation: its value is the
+// client's domain and its source is the domain's signing key.
+function readClientDomainOperation(
+  tx: Transaction
+): { domain: string; signer: string } | null {
+  for (const op of tx.operations) {
+    if (op.type === "manageData" && op.name === "client_domain") {
+      return {
+        domain: op.value ? op.value.toString() : "",
+        signer: op.source ?? "",
+      };
+    }
+  }
+  return null;
+}
+
 // Resolve the client_domain's stellar.toml and confirm the SIGNING_KEY it
 // publishes matches the key that signed the challenge.
-async function verifyClientDomain(transaction: string, clientDomainAccountID: string): Promise<void> {
-  const clientDomain = WebAuth.readChallengeTx(
-    transaction,
-    getServerKeypair().publicKey(),
-    networkPassphrase,
-    config.HOME_DOMAIN,
-    config.WEB_AUTH_DOMAIN
-  ).clientDomain;
+async function verifyClientDomain(clientDomain: string, clientDomainAccountID: string): Promise<void> {
   if (!clientDomain) {
     throw new UnauthorizedError(
       "Challenge is missing client_domain",
