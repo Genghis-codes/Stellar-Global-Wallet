@@ -400,12 +400,23 @@ export function createApp(
     if (!hasSessionCookie) return next();
 
     // Origin check against the CORS allow-list (defence in depth).
+    // corsOrigins mixes exact strings and CORS_ORIGIN_REGEX; Array.includes
+    // never matched the regex, so preview-deploy origins that CORS admits
+    // were rejected here.
     const origin = req.headers.origin;
-    if (origin && !corsOrigins.includes(origin)) {
-      return res.status(403).json({
-        error: "CSRF_ORIGIN_REJECTED",
-        message: "Origin is not allowed for cookie-authenticated requests",
-      });
+    if (
+      origin &&
+      !corsOrigins.some((allowed) =>
+        typeof allowed === "string" ? allowed === origin : allowed.test(origin)
+      )
+    ) {
+      return next(
+        new AppError("Origin is not allowed for cookie-authenticated requests", {
+          code: "FORBIDDEN",
+          status: 403,
+          details: { reason: "CSRF_ORIGIN_REJECTED" },
+        })
+      );
     }
 
     const headerToken = req.headers[CSRF_HEADER];
@@ -416,10 +427,13 @@ export function createApp(
       headerToken.length !== cookieToken.length ||
       !crypto.timingSafeEqual(Buffer.from(headerToken), Buffer.from(cookieToken))
     ) {
-      return res.status(403).json({
-        error: "CSRF_TOKEN_INVALID",
-        message: "Missing or invalid CSRF token",
-      });
+      return next(
+        new AppError("Missing or invalid CSRF token", {
+          code: "FORBIDDEN",
+          status: 403,
+          details: { reason: "CSRF_TOKEN_INVALID" },
+        })
+      );
     }
 
     return next();
