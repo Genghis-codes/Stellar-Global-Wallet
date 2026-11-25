@@ -48,7 +48,6 @@ const CB_EXPIRY_SCAN_MS = 15 * 60 * 1000;
 const CB_EXPIRY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 h
 // Cursor for the claimable-balance ingestion stream.
 const CB_CURSOR_KEY = `orbit-wal:${config.STELLAR_NETWORK}:notif-cursor:claimable-balances`;
-======
 // Horizon streams take cursor='now' to receive only future events.
 const STREAM_CURSOR = "now";
 // Reconnect delay on stream error (ms).
