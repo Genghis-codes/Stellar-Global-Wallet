@@ -50,10 +50,10 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install Rust toolchain (wasm32-unknown-unknown)
+      - name: Install Rust toolchain (wasm32v1-none)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-unknown-unknown
+          targets: wasm32v1-none
 
       - name: Cache Cargo artifacts
         uses: actions/cache@v6
@@ -71,7 +71,7 @@ jobs:
       - name: Install Stellar CLI (if not cached)
         run: |
           if ! command -v stellar >/dev/null 2>&1; then
-            cargo install --locked stellar-cli --version 22.0.1
+            cargo install --locked stellar-cli --version 27.0.0
           fi
           stellar --version
 
