@@ -117,6 +117,17 @@ function isBlockedIPv6(ip: string): boolean {
   // IPv4-mapped (::ffff:a.b.c.d) — judge by the embedded IPv4 address.
   const mapped = lower.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (mapped) return isBlockedIPv4(mapped[1]);
+  // IPv4-mapped/compatible in hex form (::ffff:7f00:1, ::7f00:1): DNS can
+  // return these and they route to the embedded IPv4 address.
+  const mappedHex = lower.match(/^::(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mappedHex) {
+    const hi = parseInt(mappedHex[1], 16);
+    const lo = parseInt(mappedHex[2], 16);
+    return isBlockedIPv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
+  // NAT64 well-known prefix with a dotted IPv4 tail, IPv4-compatible dotted.
+  const compat = lower.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
+  if (compat) return isBlockedIPv4(compat[1]);
   if (lower === "::" || lower === "::1") return true;
   const firstHextet = parseInt(lower.split(":")[0] || "0", 16);
   if ((firstHextet & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
