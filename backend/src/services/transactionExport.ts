@@ -60,7 +60,7 @@ export function toCsvRow(
   account: string,
   record: PaymentExportRecord,
   fxRate?: { rate: string; source: string; snapshotDate: string | null }
-): CsvRow {
+): CsvRow | CsvRowWithFx {
   const op = record.op as unknown as Record<string, unknown>;
   const tx = record.transaction;
 
@@ -110,7 +110,7 @@ export function toCsvRow(
   }
 
   // Build CSV row with optional FX rate info
-  const row: CsvRow = {
+  const row: CsvRow & Partial<CsvRowWithFx> = {
     date: String(op.created_at ?? ""),
     type: String(op.type ?? ""),
     direction,
