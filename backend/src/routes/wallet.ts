@@ -762,6 +762,9 @@ export function createWalletRouter(stellar: StellarService): Router {
       const publicKey = keypair.publicKey();
       const secretKey = keypair.secret();
       await logKeypairIssuance(req.user?.sub ?? "anonymous", publicKey);
+      // The body contains a secret seed: forbid any browser/proxy caching.
+      res.set("Cache-Control", "no-store");
+      res.set("Pragma", "no-cache");
       res.json({ publicKey, secretKey });
     } catch (err) {
       next(err);
