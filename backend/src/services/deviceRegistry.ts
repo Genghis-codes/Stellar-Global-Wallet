@@ -32,7 +32,7 @@
 
 import { Pool } from "pg";
 import { createHash } from "crypto";
-import { pool } from "../db";
+import { pool, Queryable } from "../db";
 import { config } from "../config";
 
 export type Platform = "expo" | "web";

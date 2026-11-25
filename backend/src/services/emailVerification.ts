@@ -29,7 +29,7 @@
 import crypto from "crypto";
 import { Pool } from "pg";
 import { StrKey } from "@stellar/stellar-sdk";
-import { pool } from "../db";
+import { pool, Queryable } from "../db";
 import { getEmailProvider } from "./emailNotifier";
 import { tNotification } from "./i18nHelper";
 import { AccountMismatchError, AppError } from "../errors/appError";

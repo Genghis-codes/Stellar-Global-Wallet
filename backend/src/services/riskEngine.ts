@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import { deviceRegistry } from './deviceRegistry';
 
 /**
  * Outgoing payment risk engine.

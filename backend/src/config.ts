@@ -545,6 +545,9 @@ const envSchema = z.object({
   // (default: 90 days). Expo tokens are time-limited; clients must re-register
   // before expiry or they will stop receiving notifications.
   EXPO_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(90 * 24 * 60 * 60),
+
+  // #278 — salt for the device-token fingerprints the risk engine compares.
+  RISK_FINGERPRINT_SALT: z.string().optional(),
 });
 
 export const config = envSchema.parse(process.env);
