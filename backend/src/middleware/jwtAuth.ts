@@ -1,9 +1,8 @@
 import { Request, Response, NextFunction } from "express";
 import { TokenExpiredError } from "jsonwebtoken";
 import { runWithRequestAccount } from "../rlsContext";
-import { verifyAccessToken } from "../utils/jwt";
-import { UnauthorizedError } from "../errors/appError";
-import { sessionStore } from "../services/sessionStore";
+import { isSessionActive, verifyAccessToken } from "../utils/jwt";
+import { AppError, UnauthorizedError } from "../errors/appError";
 
 export async function jwtAuth(req: Request, res: Response, next: NextFunction) {
   const header = req.header("Authorization");
@@ -31,11 +30,28 @@ export async function jwtAuth(req: Request, res: Response, next: NextFunction) {
       return;
     }
 
-    // #200 — check revocation on every request (cached in-memory for 1s)
+    // #200 — check revocation on every request against the store that
+    // issued the session (utils/jwt's refresh-token store). The separate
+    // services/sessionStore never sees these sessions, so asking it marked
+    // every session-bound token as revoked.
     const sessionId = payload.session_id;
     if (sessionId) {
-      const revoked = await sessionStore.isSessionRevoked(payload.sub, sessionId);
-      if (revoked) {
+      let active: boolean;
+      try {
+        active = await isSessionActive(payload.sub, sessionId);
+      } catch {
+        // Session store unreachable: a server-side outage, not a bad token —
+        // don't make clients throw their credentials away.
+        next(
+          new AppError("Session store unavailable", {
+            code: "SERVICE_UNAVAILABLE",
+            status: 503,
+            retryable: true,
+          })
+        );
+        return;
+      }
+      if (!active) {
         next(new UnauthorizedError("Session has been revoked", "SESSION_REVOKED"));
         return;
       }

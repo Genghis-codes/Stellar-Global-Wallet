@@ -292,6 +292,16 @@ export class RedisRefreshTokenStore {
     return true;
   }
 
+  /** True while the session exists and belongs to `sub` (not revoked/expired). */
+  async isSessionActive(sub: string, sessionId: string): Promise<boolean> {
+    await this.ensureConnected();
+    const [isMember, exists] = await Promise.all([
+      this.client.sIsMember(this.accountSessionsKey(sub), sessionId),
+      this.client.exists(this.sessionKey(sessionId)),
+    ]);
+    return Boolean(isMember) && exists === 1;
+  }
+
   /**
    * Revoke every session for `sub` except `keepSessionId` (the caller's
    * current session). Returns the number of sessions revoked.
@@ -364,6 +374,11 @@ export async function rotateRefreshToken(
     refreshToken: result.token,
     sessionId: result.sessionId,
   };
+}
+
+/** Whether an access token's `session_id` still names a live session of `sub`. */
+export async function isSessionActive(sub: string, sessionId: string): Promise<boolean> {
+  return getDefaultStore().isSessionActive(sub, sessionId);
 }
 
 export async function revokeRefreshToken(token: string): Promise<void> {
