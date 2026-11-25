@@ -110,3 +110,11 @@ export {
 } from "./client.js";
 export type { ApiClientOptions, AuthTokens, RequestOptions, TokenStore } from "./client.js";
 
+/**
+ * Key management abstraction (#295): sign transactions and Soroban auth
+ * entries without exporting private keys. Includes WebCrypto/IndexedDB
+ * (non-extractable), Expo SecureStore, and hardware wallet adapters plus
+ * biometric gating hooks.
+ */
+export * from "./keystore/index.js";
+

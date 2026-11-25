@@ -222,3 +222,53 @@ const signed = await signer.signTransaction(envelopeXdr, {
 
 `SpeculosTransport` implements the same `LedgerTransport` interface, so the
 emulator exercises the exact signing path used in production.
+
+## Key management
+
+The SDK exposes a pluggable `Keystore` interface so web, React Native, and
+hardware-wallet integrations can sign transactions and Soroban authorization
+entries without exporting private key material:
+
+- **`WebCryptoKeystore`** (Web) — generates or imports Ed25519 keys with
+  `extractable: false` and persists `CryptoKey` handles in IndexedDB. Raw
+  private key bytes never leave WebCrypto.
+- **`ExpoSecureStoreKeystore`** (React Native) — stores secret seeds in OS
+  Keychain / Keystore via `expo-secure-store` (with optional
+  `requireAuthentication`) while keeping only public descriptors in the index.
+- **`HardwareWalletKeystore`** — delegates signing to a `HardwareWalletDevice`
+  and verifies returned signatures and envelope hashes locally before returning.
+- **`withBiometricGate`** — wraps any `Keystore` with fail-closed biometric
+  gating hooks (`isAvailable`, `authenticate`, `onAuthorized`, `onDenied`) and
+  an optional `unlockWindowMs` cleared via `lock()`.
+- **`toStellarSigner`** — adapts any `Keystore` into a `Signer` compatible
+  with `createGlobeWalletClient`.
+
+```ts
+import {
+  WebCryptoKeystore,
+  withBiometricGate,
+  toStellarSigner,
+  createGlobeWalletClient,
+  Networks,
+} from '@globe-wallet/sdk';
+
+const baseStore = new WebCryptoKeystore();
+await baseStore.generateKey({ label: 'Primary' });
+
+const keystore = withBiometricGate(baseStore, {
+  authenticate: async ({ operation }) => ({
+    verified: await promptUserBiometric(operation),
+  }),
+});
+
+const signer = await toStellarSigner(keystore, {
+  networkPassphrase: Networks.TESTNET,
+});
+
+const client = createGlobeWalletClient('testnet', {
+  rpcUrl: 'https://soroban-testnet.stellar.org',
+  publicKey: signer.address,
+  signTransaction: signer,
+  signAuthEntry: signer,
+});
+```
