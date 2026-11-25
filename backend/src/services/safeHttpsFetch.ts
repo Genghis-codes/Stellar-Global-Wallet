@@ -57,11 +57,15 @@ const MAX_REDIRECTS = 3;
 const HOSTNAME_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}$/i;
 
 export function isValidPublicHostname(hostname: string): boolean {
-  if (HOSTNAME_PATTERN.test(hostname) && net.isIP(hostname) === 0) {
-    return true;
-  }
-  // Block octal/hex/decimal IP literals (e.g. 0x7f000001, 0177.0.0.1, 2130706433)
-  return !isValidIPLiteral(hostname);
+  // Must be a syntactically valid multi-label DNS name AND not any form of
+  // IP literal (octal/hex/decimal, e.g. 0x7f000001, 0177.0.0.1, 2130706433).
+  // Previously anything failing the pattern fell through to the literal
+  // check, so "localhost", "127.1" or "intranet" were accepted.
+  return (
+    HOSTNAME_PATTERN.test(hostname) &&
+    net.isIP(hostname) === 0 &&
+    !isValidIPLiteral(hostname)
+  );
 }
 
 function isValidIPLiteral(hostname: string): boolean {
