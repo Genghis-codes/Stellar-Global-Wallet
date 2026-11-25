@@ -6,15 +6,15 @@
   "exports": "./dist/index.js",
   "typings": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "build": "tsc --rootDir src",
+    "type-check": "tsc --noEmit --rootDir src"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^17.4.0",
     "buffer": "6.0.3"
   },
   "devDependencies": {
-    "typescript": "^5.6.2"
+    "typescript": "^7.0.2"
   },
   "license": "MIT",
   "files": [
