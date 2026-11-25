@@ -225,6 +225,11 @@ jest.mock("../../src/utils/jwt", () => {
   return {
     ...actual,
     generateRefreshToken: jest.fn(async () => "mock-refresh-token"),
+    generateTokenPair: jest.fn(async (sub: string) => ({
+      accessToken: actual.generateAccessToken(sub),
+      refreshToken: "mock-refresh-token",
+      sessionId: "mock-session",
+    })),
     rotateRefreshToken: jest.fn(async () => null),
     revokeRefreshToken: jest.fn(async () => undefined),
   };

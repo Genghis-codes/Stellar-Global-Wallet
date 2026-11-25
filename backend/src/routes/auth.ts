@@ -6,8 +6,7 @@ import { AppError, UnauthorizedError } from "../errors/appError";
 import { requireLoginApiKey } from "../middleware/loginApiKey";
 import { assertValidRequest } from "../middleware/requestValidation";
 import {
-  generateAccessToken,
-  generateRefreshToken,
+  generateTokenPair,
   rotateRefreshToken,
   revokeRefreshToken,
 } from "../utils/jwt";
@@ -69,8 +68,7 @@ authRouter.post(
       // a single identity, rather than implying per-caller signal.
       // See #88 and this identity decision for context.
       const sub = "api-key-user";
-      const accessToken = generateAccessToken(sub, "api-key");
-      const refreshToken = await generateRefreshToken(sub, { authMethod: "api-key" });
+      const { accessToken, refreshToken } = await generateTokenPair(sub, { authMethod: "api-key" });
       res.json({ accessToken, refreshToken, tokenType: "Bearer" });
     } catch (err) {
       next(err);
@@ -161,8 +159,7 @@ authRouter.post(
       }
 
       const sub = clientAccountID;
-      const accessToken = generateAccessToken(sub, "sep10");
-      const refreshToken = await generateRefreshToken(sub, { authMethod: "sep10" });
+      const { accessToken, refreshToken } = await generateTokenPair(sub, { authMethod: "sep10" });
       res.json({
         accessToken,
         refreshToken,

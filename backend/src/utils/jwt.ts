@@ -176,9 +176,15 @@ export class RedisRefreshTokenStore {
   }
 
   async generate(sub: string, metadata: SessionMetadata = {}): Promise<string> {
+    return (await this.generateSession(sub, metadata)).token;
+  }
+
+  async generateSession(
+    sub: string,
+    metadata: SessionMetadata = {}
+  ): Promise<{ sessionId: string; token: string }> {
     await this.ensureConnected();
-    const { token } = await this.createSession(sub, metadata);
-    return token;
+    return this.createSession(sub, metadata);
   }
 
   async rotate(
@@ -328,6 +334,23 @@ export async function generateRefreshToken(
   metadata: SessionMetadata = {}
 ): Promise<string> {
   return getDefaultStore().generate(sub, metadata);
+}
+
+/**
+ * Issues a refresh token and an access token bound to the same session, so
+ * the access token carries `session_id` and is rejected by jwtAuth as soon
+ * as the session is revoked (not only after the first refresh).
+ */
+export async function generateTokenPair(
+  sub: string,
+  metadata: SessionMetadata = {}
+): Promise<{ accessToken: string; refreshToken: string; sessionId: string }> {
+  const { sessionId, token } = await getDefaultStore().generateSession(sub, metadata);
+  return {
+    accessToken: generateAccessToken(sub, metadata.authMethod, sessionId),
+    refreshToken: token,
+    sessionId,
+  };
 }
 
 export async function rotateRefreshToken(
