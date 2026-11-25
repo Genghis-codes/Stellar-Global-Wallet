@@ -14,17 +14,21 @@
 //! `tests/model_fuzz.proptest-regressions` — commit that file so the seed is
 //! replayed forever.
 
-use globe_wallet::{AssetInfo, GlobeWallet, GlobeWalletClient};
+use globe_wallet::{AssetInfo, GlobeWallet, GlobeWalletClient, SPEND_LIMIT_INCREASE_DELAY_SECS};
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Env, String,
+    Address, BytesN, Env, String,
 };
 
 const ACTORS: usize = 6;
 const LEDGERS_PER_DAY: u32 = 17_280;
 const SECONDS_PER_DAY: u64 = 86_400;
 const MAX_GUARDIANS: usize = 15;
+const MIN_GUARDIANS_FOR_RECOVERY: usize = 3;
+/// Rolling spend window (issue #177): hourly buckets, 24 h + one guard bucket.
+const SPEND_BUCKET_SECONDS: u64 = 3_600;
+const SPEND_WINDOW_BUCKETS: u64 = 25;
 
 #[derive(Clone, Debug)]
 enum Op {
@@ -36,6 +40,8 @@ enum Op {
     RevokeApproval { guardian: usize },
     ExecuteRecovery,
     CancelRecovery { caller: usize },
+    ApplyGuardianChange,
+    CancelGuardianChange { caller: usize },
     SetSpendLimit { user: usize, limit: i128 },
     RecordSpend { user: usize, amount: i128 },
     AdvanceLedgers(u32),
@@ -54,6 +60,8 @@ fn op_strategy() -> impl Strategy<Value = Op> {
         a.clone().prop_map(|guardian| Op::RevokeApproval { guardian }),
         Just(Op::ExecuteRecovery),
         a.clone().prop_map(|caller| Op::CancelRecovery { caller }),
+        Just(Op::ApplyGuardianChange),
+        a.clone().prop_map(|caller| Op::CancelGuardianChange { caller }),
         (a.clone(), prop_oneof![Just(0i128), -5i128..2_000]).prop_map(|(user, limit)| Op::SetSpendLimit { user, limit }),
         (a.clone(), -5i128..800).prop_map(|(user, amount)| Op::RecordSpend { user, amount }),
         // Kept below half a day so the keeper call made after every step
@@ -78,9 +86,15 @@ struct Model {
     guardians: std::vec::Vec<usize>,
     config: Option<(u32, u32)>,
     proposal: Option<Proposal>,
+    /// Timelocked guardian change (issue #175): (guardian, add, ready_at).
+    guardian_change: Option<(usize, bool, u32)>,
+    /// Stored (in force) limit per user; 0 = unlimited.
     limits: [i128; ACTORS],
-    /// (amount, day) of the last recorded spend per user.
-    spent: [(i128, u64); ACTORS],
+    /// Queued limit increase per user (issue #176): (limit, effective_at).
+    pending_limits: [Option<(i128, u64)>; ACTORS],
+    /// Every recorded spend per user as (hour, amount); recorded whether or
+    /// not a limit is set (issue #179).
+    spends: [std::vec::Vec<(u64, i128)>; ACTORS],
     seq: u32,
     ts: u64,
     bug: bool,
@@ -90,51 +104,116 @@ impl Model {
     fn is_guardian(&self, a: usize) -> bool {
         self.guardians.contains(&a)
     }
-    fn day(&self) -> u64 {
-        self.ts / SECONDS_PER_DAY
+    fn hour(&self) -> u64 {
+        self.ts / SPEND_BUCKET_SECONDS
     }
+    /// Total over the trailing window of hourly buckets.
     fn spent_today(&self, u: usize) -> i128 {
-        let (amt, day) = self.spent[u];
-        if day == self.day() { amt } else { 0 }
+        let first = self.hour().saturating_sub(SPEND_WINDOW_BUCKETS - 1);
+        self.spends[u].iter().filter(|(h, _)| *h >= first).map(|(_, a)| *a).sum()
+    }
+    /// Limit in force, counting a matured pending increase.
+    fn effective_limit(&self, u: usize) -> i128 {
+        match self.pending_limits[u] {
+            Some((l, at)) if self.ts >= at => l,
+            _ => self.limits[u],
+        }
+    }
+    fn promote_limit(&mut self, u: usize) {
+        if let Some((l, at)) = self.pending_limits[u] {
+            if self.ts >= at {
+                self.limits[u] = l;
+                self.pending_limits[u] = None;
+            }
+        }
+    }
+    fn can_add_guardian(&self, g: usize) -> bool {
+        !self.is_guardian(g) && self.guardians.len() < MAX_GUARDIANS
+    }
+    fn can_remove_guardian(&self, g: usize) -> bool {
+        if !self.is_guardian(g) {
+            return false;
+        }
+        match self.config {
+            Some((t, _)) => self.guardians.len() as u32 - 1 >= t,
+            None => true,
+        }
+    }
+    /// Admin cancel window (issue #175).
+    fn admin_may_cancel(&self, p: &Proposal) -> bool {
+        let n = self.guardians.len();
+        if n > 0 && p.approvals.len() * 3 >= n * 2 {
+            return false;
+        }
+        match (p.ready_at, self.config) {
+            (None, _) => true,
+            (Some(r), Some((_, delay))) => self.seq < r.saturating_sub(delay / 2),
+            (Some(_), None) => false,
+        }
     }
 
     /// Applies `op`; returns whether the contract call should succeed.
     fn apply(&mut self, op: &Op) -> bool {
         match *op {
-            Op::AddGuardian { caller, guardian } => {
-                if caller != self.admin || self.is_guardian(guardian) || self.guardians.len() >= MAX_GUARDIANS {
+            Op::AddGuardian { caller, guardian } | Op::RemoveGuardian { caller, guardian } => {
+                let add = matches!(op, Op::AddGuardian { .. });
+                // The set is frozen while a recovery is pending (#175).
+                if caller != self.admin || self.proposal.is_some() {
                     return false;
                 }
-                self.guardians.push(guardian);
-                true
-            }
-            Op::RemoveGuardian { caller, guardian } => {
-                if caller != self.admin || !self.is_guardian(guardian) {
+                let valid = if add { self.can_add_guardian(guardian) } else { self.can_remove_guardian(guardian) };
+                if !valid {
                     return false;
                 }
-                if let Some((t, _)) = self.config {
-                    if (self.guardians.len() as u32 - 1) < t {
-                        return false;
-                    }
-                }
-                self.guardians.retain(|g| *g != guardian);
-                if let Some(p) = self.proposal.as_mut() {
-                    if p.approvals.contains(&guardian) {
-                        p.approvals.retain(|g| *g != guardian);
-                        if let Some((t, _)) = self.config {
-                            if (p.approvals.len() as u32) < t {
-                                p.ready_at = None;
-                            }
+                match self.config {
+                    // Initial setup: immediate.
+                    None => {
+                        if add {
+                            self.guardians.push(guardian);
+                        } else {
+                            self.guardians.retain(|g| *g != guardian);
                         }
                     }
+                    // Configured: queued behind the recovery delay.
+                    Some((_, delay)) => {
+                        if self.guardian_change.is_some() {
+                            return false;
+                        }
+                        self.guardian_change = Some((guardian, add, self.seq.saturating_add(delay)));
+                    }
                 }
+                true
+            }
+            Op::ApplyGuardianChange => {
+                let Some((guardian, add, ready_at)) = self.guardian_change else { return false };
+                if self.proposal.is_some() || self.seq < ready_at {
+                    return false;
+                }
+                // Re-validated at apply time; a failure leaves it queued.
+                let valid = if add { self.can_add_guardian(guardian) } else { self.can_remove_guardian(guardian) };
+                if !valid {
+                    return false;
+                }
+                if add {
+                    self.guardians.push(guardian);
+                } else {
+                    self.guardians.retain(|g| *g != guardian);
+                }
+                self.guardian_change = None;
+                true
+            }
+            Op::CancelGuardianChange { caller } => {
+                if caller != self.admin || self.guardian_change.is_none() {
+                    return false;
+                }
+                self.guardian_change = None;
                 true
             }
             Op::SetRecoveryConfig { caller, threshold, extra_delay } => {
                 if caller != self.admin || self.proposal.is_some() || threshold <= 1 {
                     return false;
                 }
-                if self.guardians.len() < 3 || threshold as usize > self.guardians.len() {
+                if self.guardians.len() < MIN_GUARDIANS_FOR_RECOVERY || threshold as usize > self.guardians.len() {
                     return false;
                 }
                 // extra_delay == 0 → exactly the minimum; the strategy never
@@ -192,36 +271,56 @@ impl Model {
                 }
                 self.admin = p.new_admin;
                 self.proposal = None;
+                // A change queued by the replaced admin is discarded (#175).
+                self.guardian_change = None;
                 true
             }
             Op::CancelRecovery { caller } => {
-                if caller != self.admin || self.proposal.is_none() {
+                if caller != self.admin {
+                    return false;
+                }
+                let Some(p) = self.proposal.clone() else { return false };
+                if !self.admin_may_cancel(&p) {
                     return false;
                 }
                 self.proposal = None;
                 true
             }
             Op::SetSpendLimit { user, limit } => {
-                if limit < 0 || (limit != 0 && self.spent_today(user) > limit) {
+                if limit < 0 {
                     return false;
                 }
-                self.limits[user] = limit;
+                self.promote_limit(user);
+                let current = self.limits[user];
+                let is_decrease = limit != 0 && (current == 0 || limit <= current);
+                if is_decrease || limit == current {
+                    // Immediate, retroactively checked, drops a queued increase.
+                    if limit != 0 && self.spent_today(user) > limit {
+                        return false;
+                    }
+                    self.limits[user] = limit;
+                    self.pending_limits[user] = None;
+                } else {
+                    // Increase (or clear to unlimited): delayed (#176).
+                    self.pending_limits[user] = Some((limit, self.ts.saturating_add(SPEND_LIMIT_INCREASE_DELAY_SECS)));
+                }
                 true
             }
             Op::RecordSpend { user, amount } => {
                 if amount <= 0 {
                     return false;
                 }
+                self.promote_limit(user);
                 let limit = self.limits[user];
-                if limit == 0 {
-                    return true;
-                }
                 let new_spent = self.spent_today(user) + amount;
-                let over = if self.bug { new_spent >= limit } else { new_spent > limit };
-                if over {
-                    return false;
+                if limit != 0 {
+                    let over = if self.bug { new_spent >= limit } else { new_spent > limit };
+                    if over {
+                        return false;
+                    }
                 }
-                self.spent[user] = (new_spent, self.day());
+                let hour = self.hour();
+                self.spends[user].push((hour, amount));
                 true
             }
             Op::AdvanceLedgers(n) => {
@@ -256,9 +355,21 @@ impl Harness {
         let actors: std::vec::Vec<Address> = (0..ACTORS).map(|_| Address::generate(&env)).collect();
         client.initialize(&actors[0]);
         let xlm = String::from_str(&env, "XLM");
-        let xlm_token = Address::generate(&env);
-        // Register XLM for every actor so `extend_user_ttl` covers their
-        // spend entries (it walks the user's asset list).
+        // `extend_user_ttl` walks the allowlisted tokens, so the token the
+        // limits are kept on must be a real, allowlisted SAC for the keeper
+        // call after every step to keep its spend entries alive.
+        let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+        let xlm_token = sac.address();
+        let issuer_key = match soroban_sdk::xdr::ScAddress::from(&sac.issuer().address()) {
+            soroban_sdk::xdr::ScAddress::Account(soroban_sdk::xdr::AccountId(
+                soroban_sdk::xdr::PublicKey::PublicKeyTypeEd25519(soroban_sdk::xdr::Uint256(k)),
+            )) => BytesN::from_array(&env, &k),
+            _ => panic!("SAC issuer must be an account"),
+        };
+        client.propose_allowed_token(&actors[0], &xlm_token, &String::from_str(&env, "aaa"), &Some(issuer_key));
+        let ready_at = client.pending_allowed_token(&xlm_token).unwrap().ready_at;
+        env.ledger().with_mut(|l| l.sequence_number = ready_at);
+        client.execute_allowed_token(&actors[0], &xlm_token);
         for a in &actors {
             client.add_asset(a, &AssetInfo { code: xlm.clone(), issuer: None });
         }
@@ -284,6 +395,8 @@ impl Harness {
             Op::RevokeApproval { guardian } => c.try_revoke_recovery_approval(&a[guardian]).is_ok(),
             Op::ExecuteRecovery => c.try_execute_recovery().is_ok(),
             Op::CancelRecovery { caller } => c.try_cancel_recovery(&a[caller]).is_ok(),
+            Op::ApplyGuardianChange => c.try_apply_guardian_change().is_ok(),
+            Op::CancelGuardianChange { caller } => c.try_cancel_guardian_change(&a[caller]).is_ok(),
             Op::SetSpendLimit { user, limit } => c.try_set_spend_limit(&a[user], &self.xlm_token, &limit).is_ok(),
             Op::RecordSpend { user, amount } => c.try_record_spend(&a[user], &self.xlm_token, &amount).is_ok(),
             Op::AdvanceLedgers(n) => {
@@ -315,6 +428,8 @@ impl Harness {
             ready_at: p.ready_at,
         });
         assert_eq!(proposal, m.proposal, "recovery proposal diverged at step {step} ({op:?})");
+        let change = c.pending_guardian_change().map(|ch| (self.idx(&ch.guardian), ch.add, ch.ready_at));
+        assert_eq!(change, m.guardian_change, "guardian change diverged at step {step} ({op:?})");
         if let (Some(p), Some((t, delay))) = (&m.proposal, m.config) {
             // Quorum always arms the timelock; below quorum it is disarmed.
             assert_eq!(p.ready_at.is_some(), p.approvals.len() as u32 >= t, "timelock arming at step {step}");
@@ -325,11 +440,14 @@ impl Harness {
         for (u, addr) in self.actors.iter().enumerate() {
             let limit = c.get_spend_limit(addr, &self.xlm_token);
             let spent = c.get_spent_today(addr, &self.xlm_token);
-            assert_eq!(limit, m.limits[u], "limit diverged for actor {u} at step {step} ({op:?})");
+            assert_eq!(limit, m.effective_limit(u), "limit diverged for actor {u} at step {step} ({op:?})");
+            let pending = c.pending_spend_limit(addr, &self.xlm_token).map(|p| (p.limit, p.effective_at));
+            assert_eq!(pending, m.pending_limits[u], "pending limit diverged for actor {u} at step {step} ({op:?})");
+            // Spends are tracked whether or not a limit is set (#179).
+            assert_eq!(spent, m.spent_today(u), "spent diverged for actor {u} at step {step} ({op:?})");
             if limit > 0 {
-                // Core invariant: spent today never exceeds the limit.
+                // Core invariant: the window never exceeds the limit in force.
                 assert!(spent <= limit, "spent {spent} > limit {limit} at step {step}");
-                assert_eq!(spent, m.spent_today(u), "spent diverged for actor {u} at step {step} ({op:?})");
             }
         }
     }
@@ -388,7 +506,12 @@ fn full_recovery_path_matches_model() {
         Op::AdvanceLedgers(10),
         Op::ExecuteRecovery,
         Op::AddGuardian { caller: 0, guardian: 5 }, // old admin lost control
-        Op::AddGuardian { caller: 4, guardian: 5 },
+        Op::AddGuardian { caller: 4, guardian: 5 }, // queued behind the delay (#175)
+        Op::ApplyGuardianChange,                     // not ready yet
+        Op::AdvanceLedgers(LEDGERS_PER_DAY / 2 - 1),
+        Op::AdvanceLedgers(LEDGERS_PER_DAY / 2 - 1),
+        Op::AdvanceLedgers(10),
+        Op::ApplyGuardianChange,
     ];
     run(&ops, false);
 }
