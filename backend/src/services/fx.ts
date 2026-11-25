@@ -18,7 +18,6 @@ import { config } from "../config";
 import { AppError } from "../errors/appError";
 import { tError } from "./i18nHelper";
 import { FxRateSnapshot, FxSnapshotService } from "./fxSnapshot";
-import { FX_BASE_CURRENCY, type FiatCurrency, isSupportedCurrency } from "./fx";
 
 /**
  * Currencies accepted by `?currency=`. A fixed list (rather than "whatever
@@ -33,6 +32,24 @@ export const SUPPORTED_CURRENCIES = [
 ] as const;
 
 export type FiatCurrency = (typeof SUPPORTED_CURRENCIES)[number];
+
+export const FX_BASE_CURRENCY: FiatCurrency = "USD";
+
+export function isSupportedCurrency(value: string): value is FiatCurrency {
+  return (SUPPORTED_CURRENCIES as readonly string[]).includes(value);
+}
+
+export interface FxQuote {
+  base: FiatCurrency;
+  quote: FiatCurrency;
+  /** Units of `quote` per 1 `base`, as a decimal string. */
+  rate: string;
+  source: string;
+  /** When the upstream last updated this rate (ISO 8601). */
+  updatedAt: string;
+  /** True when served from cache after a failed refresh. */
+  stale: boolean;
+}
 
 /**
  *FX Quote with historical conversion context.
