@@ -111,40 +111,19 @@ export {
 export type { ApiClientOptions, AuthTokens, RequestOptions, TokenStore } from "./client.js";
 
 /**
- * Account closure (#288): typed request/plan shapes and helpers for the
- * backend's close-account builder (cancel offers, convert/send balances,
- * remove trustlines/signers/data, merge) and its dry-run simulation.
+ * Account closure (#288) and claimable balances (#289): the backend builds
+ * these transactions; `ApiClient.buildCloseAccount`,
+ * `listClaimableBalances`, `buildClaimClaimableBalance` and
+ * `buildReclaimClaimableBalance` call it. Their request/response shapes:
  */
-export {
-  buildCloseAccount,
-  CloseAccountError,
-  isCloseAccountError,
-} from "./closeAccount/index.js";
 export type {
-  CloseAccountRequest,
-  CloseAccountPlan,
-  CloseAccountSimulation,
-  CloseAccountStep,
-  CloseAccountStepKind,
-} from "./closeAccount/index.js";
-
-/**
- * Claimable balances (#289): list shapes with evaluated predicates
- * (claimable now/after/before) and builders for claim (creating the
- * trustline when needed) and reclaim.
- */
-export {
-  buildClaimClaimableBalance,
-  buildReclaimClaimableBalance,
-  ClaimableBalanceError,
-  evaluateClaimableBalancePredicate,
-  isClaimableBalanceError,
-} from "./claimableBalances/index.js";
-export type {
+  BuildClaimClaimableBalanceRequest,
+  BuildCloseAccountRequest,
+  BuildReclaimClaimableBalanceRequest,
+  BuiltOperation,
+  BuiltTransaction,
   ClaimableBalance,
-  ClaimableBalanceClaimRequest,
-  ClaimableBalanceReclaimRequest,
   ClaimableBalanceState,
-  ClaimableBalancePredicateEvaluation,
-} from "./claimableBalances/index.js";
+  ListClaimableBalancesResponse,
+} from "./client.js";
 
