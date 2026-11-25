@@ -22,7 +22,10 @@ export type BuildIntentKind =
   | "payment"
   | "path-payment-strict-send"
   | "path-payment-strict-receive"
-  | "trustline";
+  | "trustline"
+  | "close-account"
+  | "claim-claimable-balance"
+  | "reclaim-claimable-balance";
 
 export interface BuildIntent {
   kind: BuildIntentKind;

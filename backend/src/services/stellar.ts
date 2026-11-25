@@ -1753,32 +1753,10 @@ export class StellarService {
       });
     }
 
-    // 2. Drain non-native balances. Sponsored trustlines are unwrapped first
-    //    (revoke sponsorship) so the reserve is released back to the sponsor
-    //    and the trustline can be removed.
-    const sponsoredTrustlines = balances.filter(
-      (b): b is CreditBalanceLine =>
-        (b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12") &&
-        !!b.sponsor &&
-        b.sponsor !== accountId
-    );
-    for (const line of sponsoredTrustlines) {
-      const asset = new StellarSdk.Asset(line.asset_code, line.asset_issuer);
-      builder.addOperation(
-        StellarSdk.Operation.revokeAccountSponsorship({
-          account: accountId,
-        })
-      );
-      operations.push({
-        type: "revokeSponsorship",
-        asset: `${line.asset_code}:${line.asset_issuer}`,
-        sponsor: line.sponsor,
-      });
-      // After revoking, the trustline is owned by the account and can be
-      // drained/removed like any other.
-      void asset;
-    }
-
+    // 2. Drain non-native balances, then remove each trustline. A trustline
+    //    sponsored by another account is removed the same way: deleting it
+    //    returns the reserve to its sponsor. (Only the sponsor may submit
+    //    revokeSponsorship, so the closing account must not try to.)
     const creditLines = balances.filter(
       (b): b is CreditBalanceLine =>
         b.asset_type === "credit_alphanum4" || b.asset_type === "credit_alphanum12"
@@ -1787,7 +1765,6 @@ export class StellarService {
     for (const line of creditLines) {
       const assetString = `${line.asset_code}:${line.asset_issuer}`;
       const balance = toStroops(line.balance);
-      const isSponsored = !!line.sponsor && line.sponsor !== accountId;
 
       if (balance > 0n) {
         const shouldConvert = convertAssets.includes(assetString);
@@ -1800,7 +1777,12 @@ export class StellarService {
             destinationAsset: "XLM",
             destinationPublicKey: accountId,
           });
-          const quote = quoted[0] as { destination_amount?: string } | undefined;
+          const quote = quoted[0] as
+            | {
+                destination_amount?: string;
+                path?: Array<{ asset_type: string; asset_code?: string; asset_issuer?: string }>;
+              }
+            | undefined;
           if (!quote?.destination_amount) {
             throw new AppError(`No conversion path found for ${assetString}`, {
               code: "CLOSE_ACCOUNT_NO_PATH",
@@ -1815,7 +1797,13 @@ export class StellarService {
               destination: accountId,
               destAsset: StellarSdk.Asset.native(),
               destMin,
-              path: [],
+              // Use the intermediate hops Horizon found; an empty path only
+              // works when a direct order book exists.
+              path: (quote.path ?? []).map((hop) =>
+                hop.asset_type === "native" || !hop.asset_code || !hop.asset_issuer
+                  ? StellarSdk.Asset.native()
+                  : new StellarSdk.Asset(hop.asset_code, hop.asset_issuer)
+              ),
             })
           );
           operations.push({
@@ -1842,29 +1830,25 @@ export class StellarService {
         }
       }
 
-      // 3. Remove the trustline. Sponsored lines were unwrapped above; if the
-      //    unwrap failed on-chain this operation fails, which is the safe
-      //    outcome (the account is not merged).
-      if (!isSponsored || sponsoredTrustlines.some((s) => s.asset_code === line.asset_code && s.asset_issuer === line.asset_issuer)) {
-        builder.addOperation(
-          StellarSdk.Operation.changeTrust({
-            asset: new StellarSdk.Asset(line.asset_code, line.asset_issuer),
-            limit: "0",
-          })
-        );
-        operations.push({ type: "removeTrustline", asset: assetString });
-      }
+      // 3. Remove the trustline now that its balance has been drained.
+      builder.addOperation(
+        StellarSdk.Operation.changeTrust({
+          asset: new StellarSdk.Asset(line.asset_code, line.asset_issuer),
+          limit: "0",
+        })
+      );
+      operations.push({ type: "removeTrustline", asset: assetString });
     }
 
     // 4. Remove extra signers and data entries so the merge isn't blocked by
     //    subentries that would otherwise keep the account alive.
     if (params.removeSigners !== false) {
-      const signers = (validated.signers ?? []).filter((s) => s.key !== accountId);
+      const signers = (sourceAccount.signers ?? []).filter((s) => s.key !== accountId);
       for (const signer of signers) {
         builder.addOperation(
           StellarSdk.Operation.setOptions({
-            signer: { ed25519PublicKey: signer.key, weight: 0 },
-          })
+            signer: removeSignerOption(signer),
+          } as Parameters<typeof StellarSdk.Operation.setOptions>[0])
         );
         operations.push({ type: "removeSigner", signer: signer.key });
       }
@@ -1887,7 +1871,7 @@ export class StellarService {
     const tx = builder.setTimeout(BUILD_TIMEOUT_SECONDS).build();
     await this.recordBuilt(tx, {
       kind: "close-account",
-      params: { account: accountId, destination, operationCount: operations.length },
+      params: { account: accountId, destination, operationCount: String(operations.length) },
     });
 
     return {
@@ -1951,7 +1935,7 @@ export class StellarService {
       const tx = new StellarSdk.Transaction(build.xdr, this.networkPassphrase);
       const response = await this.server
         .transactions()
-        .transaction(tx.hash().toString("hex"))
+        .transaction(Buffer.from(tx.hash()).toString("hex"))
         .call();
       simulation = {
         available: true,
@@ -1980,15 +1964,23 @@ export class StellarService {
   //  (creating the trustline if needed) and reclaim.
   // ---------------------------------------------------------------------------
 
-  async listClaimableBalances(account: string): Promise<ClaimableBalanceList> {
+  async listClaimableBalances(
+    account: string,
+    page: { limit?: number; cursor?: string } = {}
+  ): Promise<ClaimableBalanceList> {
     assertGAddress(account, "account");
+    const limit = page.limit ?? 200;
     let records: StellarSdk.Horizon.ServerApi.ClaimableBalanceRecord[];
     try {
-      const page = await this.server.claimableBalances().claimant(account).limit(200).call();
-      records = (page as { records?: StellarSdk.Horizon.ServerApi.ClaimableBalanceRecord[] })
+      let query = this.server.claimableBalances().claimant(account).limit(limit).order("desc");
+      if (page.cursor) query = query.cursor(page.cursor);
+      const result = await query.call();
+      records = (result as { records?: StellarSdk.Horizon.ServerApi.ClaimableBalanceRecord[] })
         .records ?? [];
     } catch (err) {
-      if (hasResponseStatus(err, 404)) return { balances: [] };
+      if (hasResponseStatus(err, 404)) {
+        return { balances: [], evaluatedAt: new Date().toISOString(), next: null, hasMore: false };
+      }
       throw translateHorizonTransportError(err);
     }
 
@@ -2011,7 +2003,14 @@ export class StellarService {
       };
     });
 
-    return { balances, evaluatedAt: new Date(now).toISOString() };
+    const last = records[records.length - 1] as { paging_token?: string } | undefined;
+    const hasMore = records.length === limit;
+    return {
+      balances,
+      evaluatedAt: new Date(now).toISOString(),
+      next: hasMore && last?.paging_token ? last.paging_token : null,
+      hasMore,
+    };
   }
 
   async buildClaimClaimableBalanceTransaction(params: {
@@ -2029,6 +2028,15 @@ export class StellarService {
 
     const sourceAccount = await this.getAccount(accountId);
     const record = await this.loadClaimableBalance(balanceId);
+    // Only a listed claimant whose predicate holds right now can claim;
+    // building anything else yields a transaction that fails on-chain.
+    const claimant = (record.claimants ?? []).find((c) => c.destination === accountId);
+    if (!claimant || !evaluateClaimPredicate({ claimants: [claimant] }).claimableNow) {
+      throw new AppError("This account cannot claim the balance right now", {
+        code: "CLAIMABLE_BALANCE_NOT_CLAIMABLE",
+        status: 422,
+      });
+    }
     const asset = parseAsset(record.asset);
     const builder = new StellarSdk.TransactionBuilder(sourceAccount, {
       fee: await this.currentBaseFee(),
@@ -2053,7 +2061,7 @@ export class StellarService {
     const tx = builder.setTimeout(BUILD_TIMEOUT_SECONDS).build();
     await this.recordBuilt(tx, {
       kind: "claim-claimable-balance",
-      params: { account: accountId, balanceId, createdTrustline },
+      params: { account: accountId, balanceId, createdTrustline: String(createdTrustline) },
     });
 
     return {
@@ -2111,7 +2119,7 @@ export class StellarService {
     const tx = builder.setTimeout(BUILD_TIMEOUT_SECONDS).build();
     await this.recordBuilt(tx, {
       kind: "reclaim-claimable-balance",
-      params: { account: accountId, balanceId, createdTrustline },
+      params: { account: accountId, balanceId, createdTrustline: String(createdTrustline) },
     });
 
     return {
@@ -2130,7 +2138,7 @@ export class StellarService {
       const page = await this.server.offers().forAccount(accountId).limit(200).call();
       const records = (page as { records?: Array<StellarSdk.Horizon.ServerApi.OfferRecord> }).records ?? [];
       return records.map((offer) => ({
-        id: offer.id,
+        id: String(offer.id),
         selling: assetToString(offer.selling),
         buying: assetToString(offer.buying),
         price: offer.price,
@@ -2221,6 +2229,9 @@ export interface ClaimableBalanceInfo {
 export interface ClaimableBalanceList {
   balances: ClaimableBalanceInfo[];
   evaluatedAt: string;
+  /** Paging token for the next page, or null on the last page. */
+  next: string | null;
+  hasMore: boolean;
 }
 
 export interface ClaimClaimableBalanceBuild extends UnsignedTransactionInfo {
@@ -2385,6 +2396,17 @@ type CreditBalanceLine = Extract<
   ValidatedHorizonBalanceLine,
   { asset_type: "credit_alphanum4" | "credit_alphanum12" }
 >;
+
+/** setOptions signer payload that removes (weight 0) a Horizon signer of any key type. */
+function removeSignerOption(signer: { key: string; type: string }) {
+  if (signer.type === "sha256_hash") {
+    return { sha256Hash: Buffer.from(StellarSdk.StrKey.decodeSha256Hash(signer.key)), weight: 0 };
+  }
+  if (signer.type === "preauth_tx") {
+    return { preAuthTx: Buffer.from(StellarSdk.StrKey.decodePreAuthTx(signer.key)), weight: 0 };
+  }
+  return { ed25519PublicKey: signer.key, weight: 0 };
+}
 
 function findTrustline(
   account: StellarSdk.Horizon.AccountResponse,
