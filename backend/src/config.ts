@@ -548,6 +548,9 @@ const envSchema = z.object({
 
   // #278 — salt for the device-token fingerprints the risk engine compares.
   RISK_FINGERPRINT_SALT: z.string().optional(),
+
+  // #260 — optional SEP-30 recovery server; unset disables the integration.
+  SEP30_SERVER_URL: z.string().url().optional(),
 });
 
 export const config = envSchema.parse(process.env);

@@ -106,11 +106,11 @@ export interface Sep30RecoverySigner {
 export async function fetchSep30Signers(
   account: string
 ): Promise<Sep30RecoverySigner[]> {
-  if (!config.SEP30_RECOVERY_SERVER_URL) return [];
+  if (!config.SEP30_SERVER_URL) return [];
 
   const url = new URL(
     `/accounts/${encodeURIComponent(account)}/signers`,
-    config.SEP30_RECOVERY_SERVER_URL
+    config.SEP30_SERVER_URL
   );
 
   const { default: https } = await import("https");
@@ -217,10 +217,10 @@ export async function startRecoveryNotifier(): Promise<void> {
   }
 
   console.log("[recovery-notifier] starting for contract", config.GLOBE_WALLET_CONTRACT_ID);
-  if (config.SEP30_RECOVERY_SERVER_URL) {
+  if (config.SEP30_SERVER_URL) {
     console.log(
       "[recovery-notifier] SEP-30 recovery server enabled:",
-      config.SEP30_RECOVERY_SERVER_URL
+      config.SEP30_SERVER_URL
     );
   }
 
@@ -363,7 +363,7 @@ async function processEvent(event: SorobanEvent): Promise<void> {
   // SEP-30 recovery server integration (#260): when a recovery is initiated,
   // also surface any SEP-30 recovery signers so the owner is aware of the
   // alternative recovery path alongside guardians.
-  if (isRecoveryInitiated && config.SEP30_RECOVERY_SERVER_URL) {
+  if (isRecoveryInitiated && config.SEP30_SERVER_URL) {
     try {
       const signers = await fetchSep30Signers(ownerAddress);
       await notifySep30Signers(ownerAddress, signers, event.id);
@@ -373,6 +373,33 @@ async function processEvent(event: SorobanEvent): Promise<void> {
         (err as Error).message
       );
     }
+  }
+
+  // Guardian notification — only on initiation (they need to approve).
+  if (isRecoveryInitiated) {
+    await notifyGuardians(event, ownerAddress);
+  }
+
+  // Cache invalidation: bust the contract cache when detecting state-mutating
+  // events so subsequent reads reflect the new on-chain state immediately.
+  bustContractCache(event.contractId).catch((err: Error) => {
+    console.error(
+      `[recovery-notifier] failed to bust cache for ${event.contractId}`,
+      err.message
+    );
+  });
+}
+
+async function notifyGuardians(event: SorobanEvent, ownerAddress: string): Promise<void> {
+  // `recovery.initiated` carries the guardian list (Vec<Address>) in its
+  // value; if the structure differs we log and skip rather than crash.
+  const guardianAddresses = extractGuardianAddresses(event.value);
+  if (guardianAddresses.length === 0) {
+    console.warn(
+      "[recovery-notifier] could not extract guardian addresses from event",
+      event.id
+    );
+    return;
   }
 
   // Exclude the owner from the guardian list (should not happen but be safe).
@@ -410,6 +437,16 @@ function extractAddress(value: SorobanEventValue): string | null {
     if (typeof obj.owner === "string") return obj.owner;
   }
   return null;
+}
+
+function extractGuardianAddresses(val: SorobanEventValue): string[] {
+  if (!val || !val.value) return [];
+  if (Array.isArray(val.value)) {
+    return (val.value as unknown[])
+      .map((v) => (typeof v === "string" ? v : null))
+      .filter((v): v is string => v !== null && v.startsWith("G"));
+  }
+  return [];
 }
 
 function sleep(ms: number): Promise<void> {
