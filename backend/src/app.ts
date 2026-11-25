@@ -352,6 +352,14 @@ export function createApp(
   const CSRF_HEADER = "x-csrf-token";
   const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+  // timingSafeEqual throws when byte lengths differ, which equal *string*
+  // lengths do not guarantee (multi-byte characters) — compare bytes.
+  function safeEqual(a: string, b: string): boolean {
+    const left = Buffer.from(a);
+    const right = Buffer.from(b);
+    return left.length === right.length && crypto.timingSafeEqual(left, right);
+  }
+
   function parseCookies(header: string | undefined): Record<string, string> {
     const out: Record<string, string> = {};
     if (!header) return out;
@@ -360,7 +368,13 @@ export function createApp(
       if (idx === -1) continue;
       const key = part.slice(0, idx).trim();
       const value = part.slice(idx + 1).trim();
-      if (key) out[key] = decodeURIComponent(value);
+      if (!key) continue;
+      try {
+        out[key] = decodeURIComponent(value);
+      } catch {
+        // Malformed %-escape in someone's cookie: ignore that cookie rather
+        // than throwing URIError and failing the request with a 500.
+      }
     }
     return out;
   }
@@ -424,8 +438,7 @@ export function createApp(
     if (
       typeof headerToken !== "string" ||
       !cookieToken ||
-      headerToken.length !== cookieToken.length ||
-      !crypto.timingSafeEqual(Buffer.from(headerToken), Buffer.from(cookieToken))
+      !safeEqual(headerToken, cookieToken)
     ) {
       return next(
         new AppError("Missing or invalid CSRF token", {
