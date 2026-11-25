@@ -18,7 +18,7 @@
 //! Every entry point is measured on a "warm" path (state it needs already
 //! exists) so an extra storage read/write shows up as a CPU/memory jump.
 
-use globe_wallet::{AssetInfo, GlobeWallet, GlobeWalletClient};
+use globe_wallet::{AssetInfo, DataKey, GlobeWallet, GlobeWalletClient, Role};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token, Address, BytesN, Env, String,
@@ -103,6 +103,8 @@ fn measure_all() -> BTreeMap<std::string::String, Cost> {
     r.measure("globe_wallet.transfer_admin", || w.transfer_admin(&admin, &new_admin));
     r.measure("globe_wallet.accept_admin", || w.accept_admin(&new_admin));
     let admin = new_admin.clone();
+    r.measure("globe_wallet.storage_layout", || w.storage_layout());
+    r.measure("globe_wallet.migrate_storage_layout", || w.migrate_storage_layout(&admin));
 
     // ── upgrade (execute_upgrade needs an uploaded WASM; see upgrade_compat.rs) ──
     let hash = BytesN::from_array(&env, &[7u8; 32]);
@@ -127,7 +129,13 @@ fn measure_all() -> BTreeMap<std::string::String, Cost> {
     r.measure("globe_wallet.revoke_recovery_approval", || w.revoke_recovery_approval(&g[1]));
     r.measure("globe_wallet.recovery_proposal", || w.recovery_proposal());
     r.measure("globe_wallet.cancel_recovery", || w.cancel_recovery(&admin));
+    // Recovery is configured, so guardian changes are timelocked (#175).
     r.measure("globe_wallet.remove_guardian", || w.remove_guardian(&admin, &g[3]));
+    r.measure("globe_wallet.pending_guardian_change", || w.pending_guardian_change());
+    r.measure("globe_wallet.cancel_guardian_change", || w.cancel_guardian_change(&admin));
+    w.remove_guardian(&admin, &g[3]);
+    env.ledger().with_mut(|l| l.sequence_number += GlobeWallet::MIN_RECOVERY_DELAY_LEDGERS);
+    r.measure("globe_wallet.apply_guardian_change", || w.apply_guardian_change());
     w.initiate_recovery(&g[0], &target);
     w.approve_recovery(&g[1]);
     env.ledger().with_mut(|l| l.sequence_number += GlobeWallet::MIN_RECOVERY_DELAY_LEDGERS);
@@ -144,12 +152,26 @@ fn measure_all() -> BTreeMap<std::string::String, Cost> {
     let xlm_token = Address::generate(&env);
     r.measure("globe_wallet.set_spend_limit", || w.set_spend_limit(&user, &xlm_token, &1_000_000));
     r.measure("globe_wallet.get_spend_limit", || w.get_spend_limit(&user, &xlm_token));
+    // An increase is queued (#176).
+    w.set_spend_limit(&user, &xlm_token, &2_000_000);
+    r.measure("globe_wallet.pending_spend_limit", || w.pending_spend_limit(&user, &xlm_token));
+    r.measure("globe_wallet.cancel_pending_spend_limit", || {
+        w.cancel_pending_spend_limit(&user, &user, &xlm_token)
+    });
     r.measure("globe_wallet.record_spend", || w.record_spend(&user, &xlm_token, &10));
     r.measure("globe_wallet.get_spent_today", || w.get_spent_today(&user, &xlm_token));
     r.measure("globe_wallet.get_spend_allowance", || w.get_spend_allowance(&user, &xlm_token));
     r.measure("globe_wallet.is_limit_archived", || w.is_limit_archived(&user, &xlm_token));
     r.measure("globe_wallet.extend_user_ttl", || w.extend_user_ttl(&user));
     r.measure("globe_wallet.migrate_user_assets", || w.migrate_user_assets(&admin, &user));
+    // Legacy (user, asset_code) limit + record from before #173.
+    let legacy_token = Address::generate(&env);
+    env.as_contract(&wallet_id, || {
+        env.storage().persistent().set(&DataKey::SpendLimit(user.clone(), xlm.clone()), &5_000_i128);
+    });
+    r.measure("globe_wallet.migrate_spend_limit", || {
+        w.migrate_spend_limit(&admin, &user, &xlm, &legacy_token)
+    });
 
     // ── token wiring ──
     let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
@@ -167,9 +189,21 @@ fn measure_all() -> BTreeMap<std::string::String, Cost> {
     r.measure("globe_wallet.propose_allowed_token", || {
         w.propose_allowed_token(&admin, &token_id, &sac_code, &Some(issuer_key.clone()))
     });
-    let ready_at = w.pending_allowed_token(&token_id).unwrap().ready_at;
+    let ready_at = r.measure("globe_wallet.pending_allowed_token", || w.pending_allowed_token(&token_id))
+        .unwrap()
+        .ready_at;
     env.ledger().with_mut(|l| l.sequence_number = ready_at);
     r.measure("globe_wallet.execute_allowed_token", || w.execute_allowed_token(&admin, &token_id));
+    r.measure("globe_wallet.allowed_token_info", || w.allowed_token_info(&token_id));
+    let other_sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let other_key = match soroban_sdk::xdr::ScAddress::from(&other_sac.issuer().address()) {
+        soroban_sdk::xdr::ScAddress::Account(soroban_sdk::xdr::AccountId(
+            soroban_sdk::xdr::PublicKey::PublicKeyTypeEd25519(soroban_sdk::xdr::Uint256(k)),
+        )) => BytesN::from_array(&env, &k),
+        _ => panic!("SAC issuer must be an account"),
+    };
+    w.propose_allowed_token(&admin, &other_sac.address(), &sac_code, &Some(other_key));
+    r.measure("globe_wallet.cancel_allowed_token", || w.cancel_allowed_token(&admin, &other_sac.address()));
     r.measure("globe_wallet.is_token_allowed", || w.is_token_allowed(&token_id));
     r.measure("globe_wallet.get_allowed_tokens", || w.get_allowed_tokens());
     r.measure("globe_wallet.allowed_tokens", || w.allowed_tokens());
@@ -182,6 +216,21 @@ fn measure_all() -> BTreeMap<std::string::String, Cost> {
     let spender = Address::generate(&env);
     tw.approve(&user, &spender, &token_id, &1_000, &expiry, &None);
     r.measure("token_wrapper.transfer_from", || tw.transfer_from(&spender, &token_id, &user, &to, &10, &None));
+
+    // ── roles & pause (#190, #191) ──
+    let pauser = Address::generate(&env);
+    r.measure("globe_wallet.grant_role", || w.grant_role(&admin, &Role::Pauser, &pauser));
+    r.measure("globe_wallet.has_role", || w.has_role(&Role::Pauser, &pauser));
+    r.measure("globe_wallet.pause", || w.pause(&pauser));
+    r.measure("globe_wallet.is_paused", || w.is_paused());
+    r.measure("globe_wallet.unpause", || w.unpause(&pauser));
+    r.measure("globe_wallet.revoke_role", || w.revoke_role(&admin, &Role::Pauser, &pauser));
+    r.measure("globe_wallet.set_pauser", || w.set_pauser(&admin, &Some(pauser.clone())));
+    r.measure("globe_wallet.pauser", || w.pauser());
+    r.measure("globe_wallet.pause_sends", || w.pause_sends(&pauser));
+    r.measure("globe_wallet.is_send_paused", || w.is_send_paused());
+    r.measure("globe_wallet.unpause_sends", || w.unpause_sends(&admin));
+
     r.measure("globe_wallet.remove_allowed_token", || w.remove_allowed_token(&admin, &token_id));
 
     r.results
@@ -296,8 +345,13 @@ fn all_entry_points_are_budgeted() {
         "cancel_recovery", "recovery_proposal", "add_asset", "remove_asset", "get_assets",
         "set_spend_limit", "get_spend_limit", "is_limit_archived", "extend_user_ttl",
         "get_spent_today", "get_spend_allowance", "record_spend", "set_token_wrapper",
-        "get_token_wrapper", "add_allowed_token", "remove_allowed_token", "is_token_allowed",
+        "get_token_wrapper", "propose_allowed_token", "execute_allowed_token", "cancel_allowed_token",
+        "pending_allowed_token", "allowed_token_info", "remove_allowed_token", "is_token_allowed",
         "get_allowed_tokens", "allowed_tokens", "send", "migrate_user_assets",
+        "storage_layout", "migrate_storage_layout", "apply_guardian_change", "cancel_guardian_change",
+        "pending_guardian_change", "pending_spend_limit", "cancel_pending_spend_limit",
+        "migrate_spend_limit", "grant_role", "revoke_role", "has_role", "pause", "unpause", "is_paused",
+        "set_pauser", "pauser", "pause_sends", "unpause_sends", "is_send_paused",
     ];
     for f in spec {
         let key = format!("globe_wallet.{f}");
