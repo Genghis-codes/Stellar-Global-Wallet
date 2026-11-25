@@ -281,7 +281,12 @@ export function createApp(
     const start = Date.now();
     res.on("finish", () => {
       const duration = Date.now() - start;
-      const route = req.route?.path ? String(req.route.path) : (req.baseUrl || req.path);
+      // Label by the route *template* (baseUrl + "/:publicKey/..."), never the
+      // raw path: raw paths embed account ids and arbitrary 404 URLs, which
+      // made the label set (and the in-memory metric map) grow without bound.
+      const route = req.route?.path
+        ? `${req.baseUrl}${String(req.route.path)}`
+        : "unmatched";
       const status = String(res.statusCode);
       metrics.httpRequestsTotal.inc({ method: req.method, route, status });
       metrics.httpRequestDurationMs.observe(duration, { method: req.method, route, status });
