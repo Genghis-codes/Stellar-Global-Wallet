@@ -16,24 +16,25 @@ Soroban smart contracts for the GlobeWallet protocol on the Stellar network.
 | Platform | Stellar / Soroban |
 | Language | Rust (`#![no_std]`) |
 | SDK | soroban-sdk 21.x |
-| Build | cargo + soroban-cli |
+| Build | stellar-cli (>= 25.2) |
 
 ## Getting Started
 
 Install the Soroban CLI:
 
 ```bash
-cargo install --locked soroban-cli
+cargo install --locked stellar-cli
 ```
 
 Build all contracts:
 
 ```bash
-cargo build --target wasm32-unknown-unknown --release
+# soroban-sdk 29 must be built by stellar-cli >= 25.2 (wasm32v1-none target)
+stellar contract build
 ```
 
 > **Debug builds are for local development only.** The workspace also defines
-> a `release-with-logs` profile (`cargo build --profile release-with-logs`)
+> a `release-with-logs` profile (`stellar contract build --profile release-with-logs`)
 > that enables `debug-assertions` on top of `release` to surface assertion
 > failures during development and testing. Despite the name, it does **not**
 > add runtime logging — Soroban contracts log via `env.events().publish(...)`,
@@ -50,7 +51,7 @@ Deploy to testnet (requires funded keypair):
 
 ```bash
 soroban contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/globe_wallet.wasm \
+  --wasm target/wasm32v1-none/release/globe_wallet.wasm \
   --source <SECRET_KEY> \
   --network testnet
 ```
