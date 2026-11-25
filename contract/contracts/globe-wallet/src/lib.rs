@@ -4915,19 +4915,26 @@ mod tests {
     /// being forgotten on upgrade.
     #[test]
     fn test_legacy_daily_spent_is_carried_into_rolling_window() {
-        let (env, cid, _admin, client) = setup();
+        // Full upgrade path: pre-#173 (user, asset_code) limit + fixed-day
+        // record → migrate_spend_limit → token-keyed legacy record → folded
+        // into the rolling window by the next spend.
+        let (env, cid, admin, client) = setup();
         let user = Address::generate(&env);
         let code = String::from_str(&env, "XLM");
         let code_token = Address::generate(&env);
-        client.set_spend_limit(&user, &code_token, &1_000_i128);
         let now = 7 * DAY + 5 * H;
         set_time(&env, now);
         env.as_contract(&cid, || {
+            env.storage()
+                .persistent()
+                .set(&DataKey::SpendLimit(user.clone(), code.clone()), &1_000_i128);
             env.storage().persistent().set(
                 &DataKey::DailySpent(user.clone(), code.clone()),
                 &SpendRecord { amount: 900, day: now / DAY },
             );
         });
+        assert!(client.migrate_spend_limit(&admin, &user, &code, &code_token));
+        assert_eq!(client.get_spend_limit(&user, &code_token), 1_000);
         assert_eq!(client.get_spent_today(&user, &code_token), 900);
         assert_eq!(
             client.try_record_spend(&user, &code_token, &101_i128),
@@ -4936,6 +4943,10 @@ mod tests {
         client.record_spend(&user, &code_token, &100_i128);
         env.as_contract(&cid, || {
             assert!(!env.storage().persistent().has(&DataKey::DailySpent(user.clone(), code.clone())));
+            assert!(!env
+                .storage()
+                .persistent()
+                .has(&DataKey::TokenDailySpent(user.clone(), code_token.clone())));
             assert!(env.storage().persistent().has(&DataKey::SpendWindow(user.clone(), code_token.clone())));
         });
         assert_eq!(client.get_spent_today(&user, &code_token), 1_000);
@@ -4945,14 +4956,15 @@ mod tests {
     fn test_legacy_daily_spent_from_long_ago_is_ignored() {
         let (env, cid, _admin, client) = setup();
         let user = Address::generate(&env);
-        let code = String::from_str(&env, "XLM");
         let code_token = Address::generate(&env);
         client.set_spend_limit(&user, &code_token, &1_000_i128);
         let now = 7 * DAY + 5 * H;
         set_time(&env, now);
         env.as_contract(&cid, || {
+            // The token-keyed legacy record is what the window loader reads
+            // (migrate_spend_limit moves pre-#173 DailySpent there).
             env.storage().persistent().set(
-                &DataKey::DailySpent(user.clone(), code.clone()),
+                &DataKey::TokenDailySpent(user.clone(), code_token.clone()),
                 &SpendRecord { amount: 900, day: now / DAY - 3 },
             );
         });
