@@ -16,6 +16,18 @@ import { startActivityFeedIndexer } from "./services/activityFeed";
 import { shutdownManager } from "./services/shutdown";
 import { assertNetworkConfigurationMatches } from "./utils/networkCheck";
 
+// A rejected promise nobody awaited (e.g. a fire-and-forget cache bust or
+// notifier call) would otherwise crash the process on Node >= 15 with no
+// context. Log it with its stack and keep serving; a synchronous uncaught
+// exception leaves state unknown, so log and exit for the orchestrator.
+process.on("unhandledRejection", (reason) => {
+  console.error("[process] unhandled promise rejection", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[process] uncaught exception, exiting", err);
+  process.exit(1);
+});
+
 async function main() {
   // #223 — Multi-network safety: verify Horizon and Soroban RPC endpoints match config
   if (config.NODE_ENV !== "test") {
