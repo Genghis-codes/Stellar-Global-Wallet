@@ -12,6 +12,7 @@ import {
   revokeRefreshToken,
 } from "../utils/jwt";
 import { config } from "../config";
+import { safeHttpsGetText } from "../services/safeHttpsFetch";
 
 export const authRouter = Router();
 
@@ -263,10 +264,13 @@ async function verifyClientDomain(clientDomain: string, clientDomainAccountID: s
 
 // Fetch https://<domain>/.well-known/stellar.toml and extract SIGNING_KEY.
 async function fetchClientDomainSigningKey(domain: string): Promise<string> {
+  // client_domain is chosen by the client, so this is a request to an
+  // arbitrary host: go through the SSRF-guarded fetcher (public DNS names
+  // only, private/metadata addresses blocked, size and time capped).
   const url = `https://${domain}/.well-known/stellar.toml`;
-  let response: Response;
+  let toml: string;
   try {
-    response = await fetch(url);
+    toml = await safeHttpsGetText(url, { timeoutMs: 5_000, maxBytes: 100 * 1024 });
   } catch {
     throw new AppError("Unable to resolve client_domain stellar.toml", {
       code: "CLIENT_DOMAIN_LOOKUP_FAILED",
@@ -274,14 +278,6 @@ async function fetchClientDomainSigningKey(domain: string): Promise<string> {
       retryable: true,
     });
   }
-  if (!response.ok) {
-    throw new AppError("Unable to resolve client_domain stellar.toml", {
-      code: "CLIENT_DOMAIN_LOOKUP_FAILED",
-      status: 502,
-      retryable: true,
-    });
-  }
-  const toml = await response.text();
   const match = toml.match(/^\s*SIGNING_KEY\s*=\s*"([^"]+)"/m);
   if (!match) {
     throw new UnauthorizedError(
