@@ -51,3 +51,18 @@ describe("Amount Handling: Stroop Precision Arithmetic (#218)", () => {
     expect(converted).toBe("125.63");
   });
 });
+
+describe("convertFromUsd rounding", () => {
+  it("carries a fractional part that rounds up into the integer part", () => {
+    expect(convertFromUsd("1.999", "1")).toBe("2.00");
+    expect(convertFromUsd("9.996", "1")).toBe("10.00");
+  });
+
+  it("keeps 7 decimals below one unit", () => {
+    expect(convertFromUsd("0.5", "0.5")).toBe("0.2500000");
+  });
+
+  it("returns null for a null amount", () => {
+    expect(convertFromUsd(null, "1.5")).toBeNull();
+  });
+});

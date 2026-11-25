@@ -281,15 +281,18 @@ export function convertFromUsd(amountUsd: string | null, rate: string): string |
     const totalScale = rateScale + usdScale;
     const divisor = 10n ** BigInt(totalScale);
 
-    const whole = product / divisor;
-    const rem = product % divisor;
-
-    const targetDecimals = whole >= 1n ? 2 : 7;
+    const negative = product < 0n;
+    const magnitude = negative ? -product : product;
+    const targetDecimals = magnitude / divisor >= 1n ? 2 : 7;
     const factor = 10n ** BigInt(targetDecimals);
-    const scaledRem = (rem * factor + divisor / 2n) / divisor;
-    const finalRemStr = scaledRem.toString().padStart(targetDecimals, "0").slice(0, targetDecimals);
+    // Round half-up on the whole scaled value so a fractional part that
+    // rounds up to 1.00 carries into the integer part (0.996 -> 1.00, not
+    // 0.10 from truncating "100").
+    const scaled = (magnitude * factor + divisor / 2n) / divisor;
+    const whole = scaled / factor;
+    const frac = (scaled % factor).toString().padStart(targetDecimals, "0");
 
-    return `${whole}.${finalRemStr}`;
+    return `${negative ? "-" : ""}${whole}.${frac}`;
   } catch {
     const value = Number(amountUsd) * Number(rate);
     if (!Number.isFinite(value)) return null;
