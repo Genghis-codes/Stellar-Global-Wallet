@@ -1,4 +1,4 @@
-import { median, rejectOutliers, computeConfidence, ProviderQuote, formatPrice } from "./types";
+import { median, rejectOutliers, computeConfidence, ProviderQuote, formatPrice, PriceSource } from "./types";
 
 /**
  * A single provider's contribution to the consensus price.
@@ -19,7 +19,9 @@ export interface ConsensusPrice {
   volume?: string;
   confidence: number;
   updatedAt: string;
-  source: string;
+  source: PriceSource;
+  /** Providers whose quotes agreed with the median. */
+  providers: string[];
 }
 
 /**
@@ -99,7 +101,14 @@ export function computeConsensusPrice(contributions: ProviderContribution[]): Co
     volume,
     confidence,
     updatedAt: bestProvider.updatedAt,
-    source: contributing.length > 1 ? `${contributing.join(", ")}` : contributing[0],
+    // A single agreeing provider is reported by name; several agreeing
+    // providers are a "consensus" price (the API's source is an enum, so a
+    // comma-joined list would be an invalid value).
+    source:
+      contributing.length === 1 && isProviderSource(contributing[0])
+        ? contributing[0]
+        : "consensus",
+    providers: contributing,
   };
 }
 
@@ -117,4 +126,8 @@ export function isStale(consensus: ConsensusPrice, maxAgeMs: number = 5 * 60_000
  */
 export function isReliable(consensus: ConsensusPrice, minConfidence: number = 0.5): boolean {
   return consensus.confidence >= minConfidence;
+}
+
+function isProviderSource(name: string): name is "stellar_dex" | "coingecko" {
+  return name === "stellar_dex" || name === "coingecko";
 }

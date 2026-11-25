@@ -9,7 +9,7 @@ export type PriceAsset = { type: "native" } | { type: "issued"; code: string; is
  * asset (e.g. an illiquid token) — the API returns `price: null` rather
  * than inventing a number.
  */
-export type PriceSource = "stellar_dex" | "coingecko" | "unavailable";
+export type PriceSource = "stellar_dex" | "coingecko" | "consensus" | "unavailable";
 
 export interface PriceQuote {
   /** Canonical asset id: `XLM` or `CODE:ISSUER`. */
@@ -48,7 +48,7 @@ export interface ProviderQuote {
 }
 
 export interface PriceProvider {
-  readonly name: Exclude<PriceSource, "unavailable">;
+  readonly name: Exclude<PriceSource, "unavailable" | "consensus">;
   /**
    * Prices as many of `assets` as this provider can. Assets it cannot
    * price are simply absent from the returned map (keyed by assetId) so
