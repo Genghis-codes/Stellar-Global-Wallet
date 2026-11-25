@@ -6,8 +6,8 @@
   "exports": "./dist/index.js",
   "typings": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
-    "type-check": "tsc --noEmit"
+    "build": "tsc --rootDir src",
+    "type-check": "tsc --noEmit --rootDir src"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^17.4.0",
