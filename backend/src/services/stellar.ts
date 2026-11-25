@@ -169,6 +169,8 @@ const PATH_EXPIRED_OPERATION_CODES = ["op_too_few_offers", "op_under_dest_min", 
 export interface StellarServiceOptions {
   horizonUrl?: string;
   networkPassphrase?: string;
+  /** Cap on Horizon response bodies (defaults to HORIZON_MAX_RESPONSE_BYTES). */
+  maxResponseBytes?: number;
 }
 
 export class StellarService {
@@ -181,7 +183,7 @@ export class StellarService {
    * (index.ts) always sets it; unit tests that don't care leave it null.
    */
   private readonly builtTxs: BuiltTransactionRegistry | null;
-  private readonly maxResponseBytes: number = DEFAULT_UPSTREAM_MAX_RESPONSE_BYTES;
+  private readonly maxResponseBytes: number;
 
   constructor(
     accountLock: AccountLock = new InProcessAccountLock(),
@@ -193,9 +195,15 @@ export class StellarService {
     this.server = new StellarSdk.Horizon.Server(horizonUrl, {
       allowHttp: horizonUrl.startsWith("http://"),
     });
+    this.maxResponseBytes =
+      options.maxResponseBytes ?? config.HORIZON_MAX_RESPONSE_BYTES;
     this.accountLock = accountLock;
     this.builtTxs = builtTxs;
-    installUpstreamHttpGuards(this.server, this.maxResponseBytes);
+    installUpstreamHttpGuards(
+      "horizon",
+      (this.server as unknown as { httpClient?: unknown }).httpClient,
+      this.maxResponseBytes
+    );
   }
 
   /** Record an unsigned transaction a build endpoint is about to return (#194). */
