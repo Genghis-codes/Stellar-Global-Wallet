@@ -758,9 +758,13 @@ async function reconcileState(contractId: string, server: StellarSdk.rpc.Server)
     console.warn(
       `[activity-feed] cursor too far behind for ${contractId}: ${gap} ledgers (max retention: ${RETENTION_LEDGERS})`
     );
+    // Restart from the oldest ledger RPC still retains. Resetting to 0 kept
+    // the gap above RETENTION_LEDGERS forever, so fetchAndProcessEvents
+    // re-entered reconcileState in an unbounded recursion.
+    const oldestRetained = Math.max(1, latestSequence - RETENTION_LEDGERS + 1);
     await pool.query(
-      `UPDATE activity_feed_cursor SET last_event_id = '', last_ledger = 0, last_checked_at = NOW() WHERE contract_id = $1`,
-      [contractId]
+      `UPDATE activity_feed_cursor SET last_event_id = '', last_ledger = $2, last_checked_at = NOW() WHERE contract_id = $1`,
+      [contractId, oldestRetained]
     );
     logLagAlert(contractId, gap, latestSequence);
     return;
@@ -780,6 +784,8 @@ async function reconcileState(contractId: string, server: StellarSdk.rpc.Server)
  * Fetches and processes events from RPC, committing them to the database.
  * Handles retention gaps by triggering reconciliation.
  */
+const EVENTS_PAGE_LIMIT = 1000;
+
 async function fetchAndProcessEvents(
   contractId: string,
   server: StellarSdk.rpc.Server
@@ -796,7 +802,7 @@ async function fetchAndProcessEvents(
         contractIds: [contractId],
       },
     ],
-    limit: 1000,
+    limit: EVENTS_PAGE_LIMIT,
   });
 
   const events = res.events;
@@ -819,13 +825,17 @@ async function fetchAndProcessEvents(
   // Commit events and update cursor
   await commitEvents(contractId, events);
 
-  // Get the last event's details
+  // A full page means more events may exist between the last returned event
+  // and the chain tip; advancing the cursor to latestLedger would skip them.
+  // Resume from the last event's ledger instead (re-reads are deduplicated by
+  // the event_id unique key).
   const lastEvent = events[events.length - 1];
-  await updateCursor(contractId, lastEvent.id, res.latestLedger);
+  const nextLedger = events.length >= EVENTS_PAGE_LIMIT ? lastEvent.ledger : res.latestLedger;
+  await updateCursor(contractId, lastEvent.id, nextLedger);
 
   return {
     lastEventId: lastEvent.id,
-    lastLedger: res.latestLedger,
+    lastLedger: nextLedger,
   };
 }
 
