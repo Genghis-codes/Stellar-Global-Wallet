@@ -135,6 +135,48 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    // 003 created `sessions` keyed by `sub`, but everything that reads the
+    // table (RLS policy, retention purge, ensureSessionsTable's indexes)
+    // uses `account`/`refresh_hash`, so booting on a freshly migrated DB
+    // failed with 'column "account" does not exist'. Bring 003's table to
+    // the shape the code expects without dropping data.
+    name: "005_sessions_account_columns",
+    up: async (client) => {
+      await client.query(`
+        ALTER TABLE sessions
+          ADD COLUMN IF NOT EXISTS account VARCHAR(56),
+          ADD COLUMN IF NOT EXISTS refresh_hash VARCHAR(64);
+
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+             WHERE table_name = 'sessions' AND column_name = 'sub'
+          ) THEN
+            UPDATE sessions SET account = sub WHERE account IS NULL;
+            ALTER TABLE sessions ALTER COLUMN sub DROP NOT NULL;
+          END IF;
+        END $$;
+
+        UPDATE sessions SET refresh_hash = '' WHERE refresh_hash IS NULL;
+        ALTER TABLE sessions ALTER COLUMN account SET NOT NULL;
+        ALTER TABLE sessions ALTER COLUMN refresh_hash SET DEFAULT '';
+        ALTER TABLE sessions ALTER COLUMN refresh_hash SET NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS sessions_account_idx ON sessions (account);
+        CREATE INDEX IF NOT EXISTS sessions_refresh_hash_idx ON sessions (refresh_hash);
+      `);
+    },
+    down: async (client) => {
+      await client.query(`
+        DROP INDEX IF EXISTS sessions_refresh_hash_idx;
+        DROP INDEX IF EXISTS sessions_account_idx;
+        ALTER TABLE sessions DROP COLUMN IF EXISTS refresh_hash;
+        ALTER TABLE sessions DROP COLUMN IF EXISTS account;
+      `);
+    },
+  },
 ];
 
 /** Arbitrary constant key for the migration advisory lock. */
