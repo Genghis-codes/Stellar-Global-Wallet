@@ -28,5 +28,15 @@
   "email.recovery_initiated.body": "A recovery process has been initiated on your GlobeWallet account.\n\nIf this was not you, please contact support immediately.\n\nEvent ID: {eventId}",
 
   "email.large_send.subject": "Large outgoing payment: {amount} {asset}",
-  "email.large_send.body": "A large payment of {amount} {asset} was sent from your GlobeWallet account to {destination}.\n\nIf you did not authorise this, contact support immediately."
+  "email.large_send.body": "A large payment of {amount} {asset} was sent from your GlobeWallet account to {destination}.\n\nIf you did not authorise this, contact support immediately.",
+
+  "claimableBalance.created.title": "Funds waiting to be claimed",
+  "claimableBalance.created.body": "{amount} {asset} is waiting for you to claim.",
+  "claimableBalance.expiring.title": "Claimable funds expiring soon",
+  "claimableBalance.expiring.body": "{amount} {asset} can only be claimed until {expiresAt}.",
+
+  "email.claimable_balance_created.subject": "You have {amount} {asset} to claim",
+  "email.claimable_balance_created.body": "{amount} {asset} has been sent to your GlobeWallet account as a claimable balance. Open the app to claim it.\n\nBalance ID: {balanceId}",
+  "email.claimable_balance_expiring.subject": "Claim your {amount} {asset} before it expires",
+  "email.claimable_balance_expiring.body": "Your claimable balance of {amount} {asset} can only be claimed until {expiresAt}. Open the app to claim it before then.\n\nBalance ID: {balanceId}"
 }

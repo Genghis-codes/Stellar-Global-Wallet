@@ -26,6 +26,8 @@
 import { createClient } from "redis";
 import { config } from "../config";
 import { tNotification } from "./i18nHelper";
+import { getVerifiedEmail } from "./emailVerification";
+import { withServiceRole } from "../db";
 
 const DEDUP_KEY_PREFIX = `orbit-wal:${config.STELLAR_NETWORK}:email-dedup:`;
 const DEDUP_TTL_SECONDS = 48 * 60 * 60;
@@ -245,4 +247,46 @@ export async function sendLargeSendEmail(
 
   await getEmailProvider().send({ to, subject, text });
   console.log(`[email-notifier] large-send alert sent to ${to}`);
+}
+
+/**
+ * Claimable-balance email (#289): a balance was created for the account or
+ * is about to expire. Sent only when the account has a verified email;
+ * deduplicated per balance and notification kind.
+ */
+export async function sendClaimableBalanceEmail(params: {
+  account: string;
+  balanceId: string;
+  amount: string;
+  asset: string;
+  kind: "created" | "expiring";
+  expiresAt?: string;
+  locale?: string;
+}): Promise<void> {
+  // Background worker: no request-scoped account context, so read under the
+  // service role (verified_emails is RLS-protected).
+  const to = await withServiceRole((tx) => getVerifiedEmail(params.account, tx), {
+    jobName: "emailNotifier.claimableBalance",
+  });
+  if (!to) return;
+
+  const isNew = await markSeen(`claimable:${params.kind}:${params.balanceId}`);
+  if (!isNew) return;
+
+  const locale = params.locale ?? "en";
+  const vars: Record<string, string> = {
+    amount: params.amount,
+    asset: params.asset,
+    balanceId: params.balanceId,
+    expiresAt: params.expiresAt ?? "",
+  };
+  const prefix =
+    params.kind === "created"
+      ? "email.claimable_balance_created"
+      : "email.claimable_balance_expiring";
+  const subject = tNotification(`${prefix}.subject`, locale, vars);
+  const text = tNotification(`${prefix}.body`, locale, vars);
+
+  await getEmailProvider().send({ to, subject, text });
+  console.log(`[email-notifier] claimable-balance (${params.kind}) email sent to ${to}`);
 }
