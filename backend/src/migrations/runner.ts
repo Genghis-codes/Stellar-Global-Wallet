@@ -137,6 +137,28 @@ export const migrations: Migration[] = [
   },
 ];
 
+/** Arbitrary constant key for the migration advisory lock. */
+const MIGRATION_LOCK_KEY = 72_841_903;
+
+/**
+ * Migration names must be "NNN_description", unique and strictly
+ * increasing, so the apply order is unambiguous across branches.
+ */
+export function assertMigrationOrder(list: Migration[] = migrations): void {
+  let previous = 0;
+  const seen = new Set<string>();
+  for (const m of list) {
+    const match = /^(\d{3,})_[a-z0-9_]+$/.exec(m.name);
+    if (!match) throw new Error(`Migration name "${m.name}" must look like 001_description`);
+    const version = Number(match[1]);
+    if (seen.has(match[1]) || version <= previous) {
+      throw new Error(`Migration "${m.name}" has a duplicate or out-of-order version`);
+    }
+    seen.add(match[1]);
+    previous = version;
+  }
+}
+
 export async function ensureMigrationTable(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -156,10 +178,14 @@ export async function getAppliedMigrations(client: PoolClient): Promise<string[]
 }
 
 export async function runMigrations(pool: Pool, direction: "up" | "down" = "up"): Promise<string[]> {
+  assertMigrationOrder();
   const client = await pool.connect();
   const applied: string[] = [];
 
   try {
+    // Several instances boot at once in production; serialise them so two
+    // never apply the same migration concurrently.
+    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY]);
     await ensureMigrationTable(client);
     const existing = await getAppliedMigrations(client);
 
@@ -198,6 +224,9 @@ export async function runMigrations(pool: Pool, direction: "up" | "down" = "up")
 
     return applied;
   } finally {
+    await client
+      .query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY])
+      .catch(() => undefined);
     client.release();
   }
 }
