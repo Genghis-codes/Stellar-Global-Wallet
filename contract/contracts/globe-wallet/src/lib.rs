@@ -3609,14 +3609,15 @@ mod tests {
             env.storage()
                 .persistent()
                 .set(&DataKey::UserAssets(user.clone()), &assets);
-                
-            // Set up some spend limits and daily spent records for all assets
-            for i in 0..GlobeWallet::MAX_ASSETS + 10 {
-                let code = String::from_str(&env, &std::format!("ASSET{}", i));
-                env.storage().persistent().set(&DataKey::SpendLimit(user.clone(), code.clone()), &1000_i128);
-                env.storage().persistent().set(&DataKey::DailySpent(user.clone(), code.clone()), &SpendRecord { amount: 500, day: 0 });
-            }
         });
+        // A token-keyed limit and some spend for every asset, trimmed or not.
+        let tokens: std::vec::Vec<Address> = (0..GlobeWallet::MAX_ASSETS + 10)
+            .map(|_| Address::generate(&env))
+            .collect();
+        for token in tokens.iter() {
+            client.set_spend_limit(&user, token, &1000_i128);
+            client.record_spend(&user, token, &500_i128);
+        }
         let removed = client.migrate_user_assets(&admin, &user);
         assert_eq!(removed, 10);
         let migration_events = all_events(&env)
@@ -3635,22 +3636,20 @@ mod tests {
         
 
         env.as_contract(&cid, || {
-            // Issue #178: limits and spend records are kept for every asset,
+            // Issue #178: limits and spend windows are kept for every asset,
             // trimmed or not.
-            for i in 0..GlobeWallet::MAX_ASSETS + 10 {
-                let code = String::from_str(&env, &std::format!("ASSET{}", i));
-                assert!(env.storage().persistent().has(&DataKey::SpendLimit(user.clone(), code.clone())));
-                assert!(env.storage().persistent().has(&DataKey::DailySpent(user.clone(), code.clone())));
+            for token in tokens.iter() {
+                assert!(env.storage().persistent().has(&DataKey::TokenSpendLimit(user.clone(), token.clone())));
+                assert!(env.storage().persistent().has(&DataKey::SpendWindow(user.clone(), token.clone())));
             }
         });
 
-        // Every previously limited token still enforces its limit.
-        for i in 0..GlobeWallet::MAX_ASSETS + 10 {
-            let _code = String::from_str(&env, &std::format!("ASSET{}", i));
-            let code_token = Address::generate(&env);
-            assert_eq!(client.get_spend_limit(&user, &code_token), 1000);
+        // Every previously limited token still enforces its limit, spend included.
+        for token in tokens.iter() {
+            assert_eq!(client.get_spend_limit(&user, token), 1000);
+            assert_eq!(client.get_spent_today(&user, token), 500);
             assert_eq!(
-                client.try_record_spend(&user, &code_token, &1001_i128),
+                client.try_record_spend(&user, token, &501_i128),
                 Err(Ok(WalletError::SpendLimitExceeded))
             );
         }
