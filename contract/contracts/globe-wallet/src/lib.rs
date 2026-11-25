@@ -5853,11 +5853,19 @@ mod tests {
         client.add_asset(&user, &xlm(&env));
         let (_, d) = find_event(&env, "asset_added").unwrap();
         assert_eq!(<(Address, String)>::try_from_val(&env, &d).unwrap(), (user.clone(), code.clone()));
+        // Spend-limit payloads are token-keyed (#173): the entrypoints no
+        // longer take an asset code, so neither can their events.
         client.set_spend_limit(&user, &code_token, &10_i128);
         let (_, d) = find_event(&env, "spend_limit_set").unwrap();
         assert_eq!(
-            <(Address, String, i128)>::try_from_val(&env, &d).unwrap(),
-            (user.clone(), code.clone(), 10)
+            <(Address, Address, i128)>::try_from_val(&env, &d).unwrap(),
+            (user.clone(), code_token.clone(), 10)
+        );
+        client.record_spend(&user, &code_token, &4_i128);
+        let (_, d) = find_event(&env, "spend_recorded").unwrap();
+        assert_eq!(
+            <(Address, Address, i128, i128, i128)>::try_from_val(&env, &d).unwrap(),
+            (user.clone(), code_token.clone(), 4, 4, 10)
         );
         let candidate = Address::generate(&env);
         client.propose_admin(&admin, &candidate);
