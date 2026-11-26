@@ -38,4 +38,7 @@ export const queryKeys = {
   preferences: {
     all: (accountId: string) => ["preferences", accountId] as const,
   },
+  email: {
+    all: (accountId: string) => ["email", accountId] as const,
+  },
 } as const;
