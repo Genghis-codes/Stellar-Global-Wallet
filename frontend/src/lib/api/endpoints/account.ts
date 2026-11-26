@@ -113,6 +113,74 @@ export interface MuxedAddressResponse {
 
 export type PagedResponse<T> = Page<T> & { hasMore: boolean };
 
+/** An unsigned transaction from a ".../build" route, ready for the wallet to sign. */
+export interface UnsignedTransaction {
+  xdr: string;
+  networkPassphrase: string;
+}
+
+/** GET /:publicKey/claimable-balances item, with predicates evaluated server-side. */
+export interface ClaimableBalance {
+  /** 72-character hex balance id. */
+  id: string;
+  /** "native" or "CODE:ISSUER". */
+  asset: string;
+  amount: string;
+  sponsor?: string;
+  lastModifiedLedger: number;
+  claimants: Array<{ destination: string; predicate: unknown }>;
+  claimableNow: boolean;
+  claimableAfter?: string;
+  claimableBefore?: string;
+}
+
+/** POST .../claim/build and .../reclaim/build. */
+export interface ClaimBuild extends UnsignedTransaction {
+  balanceId: string;
+  asset: string;
+  amount: string;
+  /** The build adds a trustline first because the account doesn't hold the asset. */
+  createdTrustline: boolean;
+}
+
+/** One step of a close-account build, shown before signing. */
+export interface CloseAccountOperation {
+  type:
+    | "cancelOffer"
+    | "revokeSponsorship"
+    | "convertBalance"
+    | "sendBalance"
+    | "removeTrustline"
+    | "removeSigner"
+    | "removeData"
+    | "accountMerge";
+  asset?: string;
+  amount?: string;
+  offerId?: string;
+  selling?: string;
+  buying?: string;
+  expectedXlm?: string;
+  minXlm?: string;
+  signer?: string;
+  name?: string;
+  sponsor?: string;
+  destination?: string;
+}
+
+export interface CloseAccountBuild extends UnsignedTransaction {
+  operations: CloseAccountOperation[];
+  operationCount: number;
+}
+
+/** POST /:publicKey/close/build with `dryRun: true`. */
+export interface CloseAccountDryRun extends CloseAccountBuild {
+  reserveRecovered: string;
+  estimatedReserve: string;
+  blocking: Array<{ code: "BALANCE_NOT_DRAINED" | "SPONSORED_TRUSTLINE" | "NO_PATH"; message: string }>;
+  canClose: boolean;
+  simulation?: { available: boolean; successful?: boolean };
+}
+
 const base = (publicKey: AccountId) => `/api/v1/account/${encodeURIComponent(publicKey)}`;
 
 export function accountApi(client: ApiClient) {
@@ -157,6 +225,37 @@ export function accountApi(client: ApiClient) {
     /** POST /:publicKey/muxed — derive an M... address for a uint64 id. */
     muxed(publicKey: AccountId, id: string | number) {
       return client.post<MuxedAddressResponse>(`${base(publicKey)}/muxed`, { id: String(id) });
+    },
+
+    claimableBalances(publicKey: AccountId, page: PageQuery = {}, signal?: AbortSignal) {
+      return client.get<PagedResponse<ClaimableBalance>>(`${base(publicKey)}/claimable-balances`, {
+        query: { cursor: page.cursor, limit: page.limit },
+        signal,
+      });
+    },
+
+    /** Build a claim (adds the trustline first when needed). */
+    buildClaim(publicKey: AccountId, balanceId: string) {
+      return client.post<ClaimBuild>(
+        `${base(publicKey)}/claimable-balances/${encodeURIComponent(balanceId)}/claim/build`,
+      );
+    },
+
+    /** Build a reclaim for a balance this account sponsored. */
+    buildReclaim(publicKey: AccountId, balanceId: string) {
+      return client.post<ClaimBuild>(
+        `${base(publicKey)}/claimable-balances/${encodeURIComponent(balanceId)}/reclaim/build`,
+      );
+    },
+
+    /** Preview the close-account sequence: steps, blocking conditions, recovered XLM. */
+    closeDryRun(publicKey: AccountId, destination: AccountId) {
+      return client.post<CloseAccountDryRun>(`${base(publicKey)}/close/build`, { destination, dryRun: true });
+    },
+
+    /** Build the close-account transaction that merges into `destination`. */
+    buildClose(publicKey: AccountId, destination: AccountId) {
+      return client.post<CloseAccountBuild>(`${base(publicKey)}/close/build`, { destination });
     },
 
     /** GET /:publicKey/transactions/export.csv (authenticated) — CSV text. */

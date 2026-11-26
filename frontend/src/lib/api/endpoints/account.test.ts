@@ -34,4 +34,31 @@ describe("accountApi", () => {
     await account.muxed(G, 7);
     expect(fetch.mock.calls[0]![1]?.body).toBe('{"id":"7"}');
   });
+
+  it("lists claimable balances with paging", async () => {
+    const { fetch, account } = setup(jsonResponse({ items: [], nextCursor: null, hasMore: false }));
+    await account.claimableBalances(G, { limit: 50 });
+    expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/account/${G}/claimable-balances?limit=50`);
+  });
+
+  it("posts claim and reclaim builds", async () => {
+    const id = "0".repeat(72);
+    const build = { xdr: "AAAA", networkPassphrase: "Test", balanceId: id, asset: "native", amount: "1", createdTrustline: false };
+    const { fetch, account } = setup(jsonResponse(build), jsonResponse(build));
+    await expect(account.buildClaim(G, id)).resolves.toEqual(build);
+    await account.buildReclaim(G, id);
+    expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/account/${G}/claimable-balances/${id}/claim/build`);
+    expect(fetch.mock.calls[0]![1]?.method).toBe("POST");
+    expect(fetch.mock.calls[1]![0]).toBe(`http://api.test/api/v1/account/${G}/claimable-balances/${id}/reclaim/build`);
+  });
+
+  it("sends the destination for close dry runs and builds", async () => {
+    const D = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    const { fetch, account } = setup(jsonResponse({ canClose: true }), jsonResponse({ xdr: "AAAA" }));
+    await account.closeDryRun(G, D);
+    await account.buildClose(G, D);
+    expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/account/${G}/close/build`);
+    expect(fetch.mock.calls[0]![1]?.body).toBe(JSON.stringify({ destination: D, dryRun: true }));
+    expect(fetch.mock.calls[1]![1]?.body).toBe(JSON.stringify({ destination: D }));
+  });
 });
