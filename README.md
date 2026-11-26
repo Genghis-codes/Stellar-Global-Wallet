@@ -39,7 +39,7 @@ flowchart LR
 
 | Part | Path | Stack | Status |
 |---|---|---|:-:|
-| 🖥️ Web app | `frontend/` *(planned)* | Next.js · Tailwind | ⚪ Not started |
+| 🖥️ Web app | [`frontend/`](frontend/) | Next.js · Tailwind · TypeScript | 🟠 In progress |
 | 📱 Mobile app | `mobile/` *(planned)* | React Native · Expo | ⚪ Not started |
 | ⚙️ Backend API | [`backend/`](backend/) | Node.js · Express · TypeScript · PostgreSQL · Redis | 🟡 Testnet |
 | 📜 Smart contracts | [`contract/`](contract/) | Rust · Soroban | 🟡 Testnet |
