@@ -1,6 +1,7 @@
 import { env } from "@/lib/env";
 import { createApiClient } from "./client";
 import { accountApi } from "./endpoints/account";
+import { assetsApi } from "./endpoints/assets";
 import { authApi } from "./endpoints/auth";
 import { configApi } from "./endpoints/config";
 import { devApi } from "./endpoints/dev";
@@ -40,6 +41,7 @@ export const apiClient = createApiClient({
 export const api = {
   auth: authApi(apiClient),
   account: accountApi(apiClient),
+  assets: assetsApi(apiClient),
   config: configApi(apiClient),
   dev: devApi(apiClient),
   email: emailApi(apiClient),
