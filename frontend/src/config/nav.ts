@@ -1,5 +1,5 @@
 import type { ComponentType, SVGProps } from "react";
-import { HomeIcon } from "@/components/icons";
+import { HomeIcon, SettingsIcon } from "@/components/icons";
 
 export interface NavItem {
   /** App route (inside the (app) route group). */
@@ -15,7 +15,10 @@ export interface NavItem {
  * (mobile). To add a page to the nav, create it under src/app/(app)/ and
  * append an entry here.
  */
-export const NAV_ITEMS: NavItem[] = [{ href: "/dashboard", label: "Dashboard", icon: HomeIcon }];
+export const NAV_ITEMS: NavItem[] = [
+  { href: "/dashboard", label: "Dashboard", icon: HomeIcon },
+  { href: "/settings", label: "Settings", icon: SettingsIcon },
+];
 
 /** Whether a nav item is the current section for `pathname`. */
 export function isNavItemActive(item: NavItem, pathname: string): boolean {
