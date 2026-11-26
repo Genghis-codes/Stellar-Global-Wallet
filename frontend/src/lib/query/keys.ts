@@ -22,6 +22,11 @@ export const queryKeys = {
     transactions: (accountId: string, page: PageQuery = {}) => ["account", accountId, "transactions", page] as const,
     payments: (accountId: string, page: PageQuery = {}) => ["account", accountId, "payments", page] as const,
     activity: (accountId: string, page: PageQuery = {}) => ["account", accountId, "activity", page] as const,
+    /** Infinite lists (all pages under one key). */
+    feed: (accountId: string, source: "payments" | "transactions" | "activity") =>
+      ["account", accountId, "feed", source] as const,
+    claimable: (accountId: string) => ["account", accountId, "claimable"] as const,
+    submissions: (accountId: string) => ["account", accountId, "submissions"] as const,
   },
   config: {
     all: () => ["config"] as const,
@@ -34,6 +39,17 @@ export const queryKeys = {
     all: () => ["price"] as const,
     many: (assets: string[]) => ["price", "many", [...assets].sort()] as const,
     history: (asset: string, range: string) => ["price", "history", asset, range] as const,
+  },
+  transactions: {
+    all: () => ["transactions"] as const,
+    detail: (hash: string, account?: string) => ["transactions", "detail", hash.toLowerCase(), account ?? null] as const,
+    status: (hash: string) => ["transactions", "status", hash.toLowerCase()] as const,
+  },
+  assets: {
+    all: () => ["assets"] as const,
+    verified: () => ["assets", "verified"] as const,
+    search: (query: string) => ["assets", "search", query] as const,
+    metadata: (code: string, issuer: string) => ["assets", "metadata", code, issuer] as const,
   },
   preferences: {
     all: (accountId: string) => ["preferences", accountId] as const,
