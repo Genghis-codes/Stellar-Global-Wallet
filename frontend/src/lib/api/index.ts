@@ -3,6 +3,7 @@ import { createApiClient } from "./client";
 import { accountApi } from "./endpoints/account";
 import { authApi } from "./endpoints/auth";
 import { configApi } from "./endpoints/config";
+import { devApi } from "./endpoints/dev";
 import { preferencesApi } from "./endpoints/preferences";
 import { priceApi } from "./endpoints/price";
 import { WebStorageTokenStore } from "./tokens";
@@ -38,6 +39,7 @@ export const api = {
   auth: authApi(apiClient),
   account: accountApi(apiClient),
   config: configApi(apiClient),
+  dev: devApi(apiClient),
   preferences: preferencesApi(apiClient),
   price: priceApi(apiClient),
 };
