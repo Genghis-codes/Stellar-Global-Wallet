@@ -26,7 +26,7 @@ function Probe() {
   );
 }
 
-function setup(tokens = new MemoryTokenStore()) {
+function setup(tokens = new MemoryTokenStore(), wallet: Partial<WalletAdapter> = {}) {
   let expire: () => void = () => {};
   const onSessionExpired = (listener: () => void) => {
     expire = listener;
@@ -35,7 +35,7 @@ function setup(tokens = new MemoryTokenStore()) {
   renderWithProviders(
     <AuthProvider
       tokens={tokens}
-      wallet={{ name: "Freighter" } as WalletAdapter}
+      wallet={{ name: "Freighter", ...wallet } as WalletAdapter}
       auth={{} as AuthApi}
       networkPassphrase="Test SDF Network ; September 2015"
       onSessionExpired={onSessionExpired}
@@ -98,5 +98,27 @@ describe("AuthProvider", () => {
     expire();
     expect(screen.getByRole("status")).toHaveTextContent("Session expired");
     expect(screen.getByText("status:signedOut")).toBeInTheDocument();
+  });
+
+  it("signs out when the wallet switches account and warns on network switches", async () => {
+    const tokens = new MemoryTokenStore();
+    tokens.set({ accessToken: "a", refreshToken: "r", account: G });
+    let push: (state: { address: string; networkPassphrase: string }) => void = () => {};
+    const stop = vi.fn();
+    mocked.signOut.mockImplementation(async (deps) => deps.tokens.clear());
+    setup(tokens, {
+      watch: (listener) => {
+        push = listener;
+        return stop;
+      },
+    });
+    act(() => push({ address: G, networkPassphrase: "Public Global Stellar Network ; September 2015" }));
+    expect(screen.getByText("Freighter is on another network")).toBeInTheDocument();
+    act(() => push({ address: G, networkPassphrase: "Test SDF Network ; September 2015" }));
+    expect(screen.queryByText("Freighter is on another network")).toBeNull();
+    act(() => push({ address: "GOTHER", networkPassphrase: "Test SDF Network ; September 2015" }));
+    expect(await screen.findByText("status:signedOut")).toBeInTheDocument();
+    expect(screen.getByText("Freighter account changed")).toBeInTheDocument();
+    expect(stop).toHaveBeenCalled();
   });
 });

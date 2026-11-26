@@ -27,6 +27,12 @@ export interface WalletNetwork {
   sorobanRpcUrl?: string;
 }
 
+/** Wallet state pushed by `watch` when the user switches account or network. */
+export interface WalletState {
+  address: string;
+  networkPassphrase: string;
+}
+
 export interface WalletAdapter {
   readonly id: string;
   readonly name: string;
@@ -41,4 +47,6 @@ export interface WalletAdapter {
   getNetwork(): Promise<WalletNetwork>;
   /** Sign a base64 transaction envelope; resolves to the signed XDR. */
   signTransaction(xdr: string, opts: { networkPassphrase: string; address?: string }): Promise<string>;
+  /** Optional: report account/network switches made in the wallet. Returns a stop function. */
+  watch?(listener: (state: WalletState) => void): () => void;
 }

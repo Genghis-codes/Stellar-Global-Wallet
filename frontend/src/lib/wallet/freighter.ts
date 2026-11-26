@@ -5,8 +5,12 @@ import {
   isConnected,
   requestAccess,
   signTransaction,
+  WatchWalletChanges,
 } from "@stellar/freighter-api";
 import { WalletError, type WalletAdapter, type WalletNetwork } from "./types";
+
+/** How often Freighter is polled for account/network switches. */
+const WATCH_INTERVAL_MS = 3000;
 
 interface FreighterError {
   code?: number;
@@ -78,5 +82,13 @@ export const freighter: WalletAdapter = {
     if (result.error) throw toWalletError(result.error, "Freighter could not sign the transaction.");
     if (!result.signedTxXdr) throw new WalletError("UNKNOWN", "Freighter returned no signed transaction.");
     return result.signedTxXdr;
+  },
+
+  watch(listener) {
+    const watcher = new WatchWalletChanges(WATCH_INTERVAL_MS);
+    watcher.watch(({ address, networkPassphrase, error }) => {
+      if (!error && address) listener({ address, networkPassphrase });
+    });
+    return () => watcher.stop();
   },
 };

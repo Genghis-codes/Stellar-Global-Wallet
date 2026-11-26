@@ -10,7 +10,17 @@ vi.mock("@stellar/freighter-api", () => ({
   getAddress: vi.fn(),
   getNetworkDetails: vi.fn(),
   signTransaction: vi.fn(),
+  WatchWalletChanges: vi.fn(function (this: Record<string, unknown>) {
+    this.watch = (cb: (p: Record<string, unknown>) => void) => {
+      cb({ address: "", networkPassphrase: "", error: { code: -1, message: "locked" } });
+      cb({ address: "GNEW", networkPassphrase: "Test SDF Network ; September 2015" });
+      return {};
+    };
+    this.stop = stopWatch;
+  }),
 }));
+
+const stopWatch = vi.hoisted(() => vi.fn());
 
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 const TESTNET = "Test SDF Network ; September 2015";
@@ -49,6 +59,15 @@ describe("freighter adapter", () => {
     mocked.signTransaction.mockResolvedValue({ signedTxXdr: "SIGNED", signerAddress: G });
     await expect(freighter.signTransaction("XDR", { networkPassphrase: TESTNET, address: G })).resolves.toBe("SIGNED");
     expect(mocked.signTransaction).toHaveBeenCalledWith("XDR", { networkPassphrase: TESTNET, address: G });
+  });
+
+  it("forwards account switches and stops watching", () => {
+    const listener = vi.fn();
+    const stop = freighter.watch!(listener);
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith({ address: "GNEW", networkPassphrase: TESTNET });
+    stop();
+    expect(stopWatch).toHaveBeenCalled();
   });
 
   it("maps generic errors to UNKNOWN", () => {

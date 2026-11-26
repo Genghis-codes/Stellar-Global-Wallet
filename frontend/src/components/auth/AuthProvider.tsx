@@ -85,6 +85,34 @@ export function AuthProvider({
     [onSessionExpired, queryClient, toast],
   );
 
+  const account = session?.account;
+
+  // Switching account in the wallet ends the session for the old account;
+  // switching network only warns, since signing would fail on the wrong one.
+  useEffect(() => {
+    if (!account || !wallet.watch) return;
+    return wallet.watch(({ address, networkPassphrase: walletPassphrase }) => {
+      if (address !== account) {
+        void revokeSession({ auth, tokens }).then(() => queryClient.clear());
+        toast.show({
+          id: "wallet-account-changed",
+          tone: "info",
+          title: `${wallet.name} account changed`,
+          description: "You were signed out. Connect again to continue with the new account.",
+        });
+      } else if (walletPassphrase && walletPassphrase !== networkPassphrase) {
+        toast.show({
+          id: "wallet-network-changed",
+          tone: "warning",
+          title: `${wallet.name} is on another network`,
+          description: "Switch it back to sign transactions with GlobeWallet.",
+        });
+      } else {
+        toast.dismiss("wallet-network-changed");
+      }
+    });
+  }, [account, wallet, auth, tokens, networkPassphrase, queryClient, toast]);
+
   const signIn = useCallback(async () => {
     setSigningIn(true);
     setError(null);
