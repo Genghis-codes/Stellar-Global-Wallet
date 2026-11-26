@@ -984,10 +984,7 @@ impl GlobeWallet {
             .ok_or(WalletError::NoPendingGuardianChange)?;
         Self::bump_instance_ttl(&env);
         env.storage().instance().remove(&DataKey::PendingGuardianChange);
-        env.events().publish(
-            (Symbol::new(&env, "guardian_change_cancelled"),),
-            (change.guardian, change.add),
-        );
+        emit_event(&env, "guardian_change_cancelled", (change.guardian, change.add));
         Ok(())
     }
 
@@ -1044,10 +1041,7 @@ impl GlobeWallet {
         env.storage()
             .instance()
             .set(&DataKey::PendingGuardianChange, &change);
-        env.events().publish(
-            (Symbol::new(env, "guardian_change_proposed"),),
-            (guardian, add, ready_at),
-        );
+        emit_event(env, "guardian_change_proposed", (guardian, add, ready_at));
         Ok(())
     }
 
@@ -1366,10 +1360,7 @@ impl GlobeWallet {
             env.storage().instance().get(&DataKey::PendingGuardianChange);
         if let Some(change) = stale_change {
             env.storage().instance().remove(&DataKey::PendingGuardianChange);
-            env.events().publish(
-                (Symbol::new(&env, "guardian_change_cancelled"),),
-                (change.guardian, change.add),
-            );
+            emit_event(&env, "guardian_change_cancelled", (change.guardian, change.add));
         }
 
         // Read once, before either event moves `old_admin`/`new_admin` by
@@ -2521,8 +2512,7 @@ impl GlobeWallet {
             Some(p) => env.storage().instance().set(&DataKey::Pauser, p),
             None => env.storage().instance().remove(&DataKey::Pauser),
         }
-        env.events()
-            .publish((Symbol::new(&env, "pauser_set"),), (admin, pauser));
+        emit_event(&env, "pauser_set", (admin, pauser));
         Ok(())
     }
 
@@ -2547,10 +2537,7 @@ impl GlobeWallet {
         }
         Self::bump_instance_ttl(&env);
         env.storage().instance().set(&DataKey::SendsPaused, &true);
-        env.events().publish(
-            (Symbol::new(&env, "sends_paused"),),
-            (caller, env.ledger().sequence()),
-        );
+        emit_event(&env, "sends_paused", (caller, env.ledger().sequence()));
         Ok(())
     }
 
@@ -2566,10 +2553,7 @@ impl GlobeWallet {
         }
         Self::bump_instance_ttl(&env);
         env.storage().instance().remove(&DataKey::SendsPaused);
-        env.events().publish(
-            (Symbol::new(&env, "sends_unpaused"),),
-            (admin, env.ledger().sequence()),
-        );
+        emit_event(&env, "sends_unpaused", (admin, env.ledger().sequence()));
         Ok(())
     }
 
@@ -2588,7 +2572,7 @@ impl GlobeWallet {
     ///
     /// Only the display list is trimmed. Spend limits and spend windows of
     /// trimmed assets are kept and keep being enforced (issue #178); one
-    /// `("migration", "asset_untracked")` event with `(user, code, limit)`
+    /// `("migration", "asset_untracked")` event with `(user, code)`
     /// is emitted per trimmed asset.
     ///
     /// # Authorization Decision
@@ -2622,6 +2606,8 @@ impl GlobeWallet {
         // tell the user which assets left their list.
         for i in Self::MAX_ASSETS..len {
             let dropped = assets.get(i).unwrap();
+            // Kept on its legacy two-symbol topic: the backend's
+            // assetMigrationNotifier/recoveryNotifier match on it.
             env.events().publish(
                 (Symbol::new(&env, "migration"), Symbol::new(&env, "asset_untracked")),
                 (user.clone(), dropped.code.clone()),
@@ -2913,10 +2899,7 @@ impl GlobeWallet {
         instance.remove(&DataKey::GuardianMembership);
         instance.remove(&DataKey::RecoveryProposal);
         instance.set(&DataKey::StorageLayout, &STORAGE_LAYOUT_VERSION);
-        env.events().publish(
-            (Symbol::new(env, "storage_migrated"),),
-            (STORAGE_LAYOUT_VERSION, moved_guardians, moved_proposal),
-        );
+        emit_event(env, "storage_migrated", (STORAGE_LAYOUT_VERSION, moved_guardians, moved_proposal));
         true
     }
 
@@ -5837,6 +5820,58 @@ mod tests {
             seen += 1;
         }
         assert!(seen > 0);
+    }
+
+    /// Every event published by `call` uses the versioned `(name, version)`
+    /// topics the backend decoder requires.
+    fn assert_versioned_events(env: &Env, expect: &str) {
+        let events = all_events(env);
+        let mut found = false;
+        for (_c, topics, _d) in events {
+            assert_eq!(topics.len(), 2, "{expect}: topics must be (name, version)");
+            assert_eq!(u32::try_from_val(env, &topics.get(1).unwrap()).unwrap(), EVENT_VERSION);
+            if Symbol::try_from_val(env, &topics.get(0).unwrap()).unwrap() == Symbol::new(env, expect) {
+                found = true;
+            }
+        }
+        assert!(found, "{expect} not emitted");
+    }
+
+    #[test]
+    fn test_pause_guardian_change_and_layout_events_are_versioned() {
+        let (env, _cid, admin, client) = setup();
+        let pauser = Address::generate(&env);
+        client.set_pauser(&admin, &Some(pauser.clone()));
+        assert_versioned_events(&env, "pauser_set");
+        client.pause_sends(&pauser);
+        assert_versioned_events(&env, "sends_paused");
+        client.unpause_sends(&admin);
+        assert_versioned_events(&env, "sends_unpaused");
+
+        let guardians: std::vec::Vec<Address> = (0..4).map(|_| Address::generate(&env)).collect();
+        for g in &guardians[..3] {
+            client.add_guardian(&admin, g);
+        }
+        client.set_recovery_config(&admin, &2, &GlobeWallet::MIN_RECOVERY_DELAY_LEDGERS);
+        client.add_guardian(&admin, &guardians[3]);
+        assert_versioned_events(&env, "guardian_change_proposed");
+        client.cancel_guardian_change(&admin);
+        assert_versioned_events(&env, "guardian_change_cancelled");
+    }
+
+    #[test]
+    fn test_storage_migration_event_is_versioned() {
+        let (env, cid, admin, client) = setup();
+        let g = Address::generate(&env);
+        let mut legacy: Vec<Address> = Vec::new(&env);
+        legacy.push_back(g);
+        env.as_contract(&cid, || {
+            env.storage().instance().set(&DataKey::Guardians, &legacy);
+        });
+        assert!(client.migrate_storage_layout(&admin));
+        assert_versioned_events(&env, "storage_migrated");
+        assert_eq!(client.storage_layout(), STORAGE_LAYOUT_VERSION);
+        assert_eq!(client.guardians(), legacy);
     }
 
     #[test]
