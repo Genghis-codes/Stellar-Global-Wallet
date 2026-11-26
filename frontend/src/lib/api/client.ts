@@ -1,3 +1,4 @@
+import { CSRF_PATH, csrfHeaders, getCsrfToken, isUnsafeMethod, setCsrfToken } from "./csrf";
 import { ApiError, toApiError } from "./errors";
 import { MemoryTokenStore, type TokenStore } from "./tokens";
 
@@ -34,6 +35,8 @@ export interface ApiClient {
   post<T>(path: string, body?: unknown, options?: Omit<RequestOptions, "method" | "body">): Promise<T>;
   put<T>(path: string, body?: unknown, options?: Omit<RequestOptions, "method" | "body">): Promise<T>;
   delete<T>(path: string, options?: Omit<RequestOptions, "method" | "body">): Promise<T>;
+  /** Make sure a CSRF token is known, fetching one from GET /auth/csrf if not. */
+  ensureCsrfToken(): Promise<string>;
   readonly tokens: TokenStore;
   readonly baseUrl: string;
 }
@@ -75,6 +78,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
     const headers: Record<string, string> = { Accept: "application/json", ...options.headers };
     if (options.body !== undefined) headers["Content-Type"] = "application/json";
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (isUnsafeMethod(method)) Object.assign(headers, csrfHeaders());
 
     const controller = new AbortController();
     const timeoutMs = options.timeoutMs ?? defaultTimeout;
@@ -127,8 +131,17 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
     return body as T;
   }
 
+  async function ensureCsrfToken(): Promise<string> {
+    const known = getCsrfToken();
+    if (known) return known;
+    const { csrfToken } = await request<{ csrfToken: string }>(CSRF_PATH, { auth: false });
+    setCsrfToken(csrfToken);
+    return csrfToken;
+  }
+
   return {
     request,
+    ensureCsrfToken,
     get: (path, options) => request(path, { ...options, method: "GET" }),
     post: (path, body, options) => request(path, { ...options, method: "POST", body }),
     put: (path, body, options) => request(path, { ...options, method: "PUT", body }),
