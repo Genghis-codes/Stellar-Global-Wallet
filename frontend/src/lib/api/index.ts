@@ -7,6 +7,7 @@ import { devApi } from "./endpoints/dev";
 import { emailApi } from "./endpoints/email";
 import { preferencesApi } from "./endpoints/preferences";
 import { priceApi } from "./endpoints/price";
+import { transactionsApi } from "./endpoints/transactions";
 import { WebStorageTokenStore } from "./tokens";
 
 export * from "./client";
@@ -44,4 +45,5 @@ export const api = {
   email: emailApi(apiClient),
   preferences: preferencesApi(apiClient),
   price: priceApi(apiClient),
+  transactions: transactionsApi(apiClient),
 };
