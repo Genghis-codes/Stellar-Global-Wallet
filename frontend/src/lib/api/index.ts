@@ -2,6 +2,7 @@ import { env } from "@/lib/env";
 import { createApiClient } from "./client";
 import { accountApi } from "./endpoints/account";
 import { authApi } from "./endpoints/auth";
+import { configApi } from "./endpoints/config";
 import { WebStorageTokenStore } from "./tokens";
 
 export * from "./client";
@@ -34,4 +35,5 @@ export const apiClient = createApiClient({
 export const api = {
   auth: authApi(apiClient),
   account: accountApi(apiClient),
+  config: configApi(apiClient),
 };
