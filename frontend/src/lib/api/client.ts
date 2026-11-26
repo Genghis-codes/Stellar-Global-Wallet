@@ -1,6 +1,6 @@
 import { CSRF_PATH, csrfHeaders, getCsrfToken, isUnsafeMethod, setCsrfToken } from "./csrf";
 import { ApiError, toApiError } from "./errors";
-import { MemoryTokenStore, type TokenStore } from "./tokens";
+import { MemoryTokenStore, type AuthTokens, type TokenStore } from "./tokens";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -13,7 +13,7 @@ export interface RequestOptions {
   /** JSON-serialised request body. */
   body?: unknown;
   headers?: Record<string, string>;
-  /** Attach the bearer access token. Default true. */
+  /** Attach the bearer access token (and refresh it on TOKEN_EXPIRED). Default true. */
   auth?: boolean;
   signal?: AbortSignal;
   /** Per-request timeout override, in ms. */
@@ -27,6 +27,10 @@ export interface ApiClientConfig {
   timeoutMs?: number;
   tokens?: TokenStore;
   fetch?: typeof fetch;
+  /** Called when the refresh token is rejected and the session is gone. */
+  onSessionExpired?: () => void;
+  /** Path of the backend's refresh route. */
+  refreshPath?: string;
 }
 
 export interface ApiClient {
@@ -42,6 +46,9 @@ export interface ApiClient {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_REFRESH_PATH = "/api/v1/auth/refresh";
+/** 401 codes that mean the session itself is unusable (sign in again). */
+const SESSION_ENDING_CODES = new Set(["SESSION_REVOKED", "AUTH_TOKEN_INVALID", "AUTH_TOKEN_TYPE_INVALID"]);
 
 export function buildUrl(baseUrl: string, path: string, query?: Record<string, QueryValue>): string {
   const url = new URL(path.replace(/^\/?/, "/"), baseUrl.replace(/\/+$/, "") + "/");
@@ -71,6 +78,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
   const baseUrl = config.baseUrl;
   const tokens = config.tokens ?? new MemoryTokenStore();
   const defaultTimeout = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const refreshPath = config.refreshPath ?? DEFAULT_REFRESH_PATH;
   const doFetch: typeof fetch = (...args) => (config.fetch ?? globalThis.fetch)(...args);
 
   async function send(path: string, options: RequestOptions, accessToken?: string): Promise<Response> {
@@ -117,13 +125,71 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
     }
   }
 
+  let refreshing: Promise<AuthTokens | null> | null = null;
+
+  /**
+   * Single-flight refresh: concurrent TOKEN_EXPIRED responses share one call
+   * to the refresh route. The backend rotates the refresh token on every use,
+   * so two parallel refreshes would revoke each other.
+   */
+  function refresh(): Promise<AuthTokens | null> {
+    if (!refreshing) {
+      refreshing = (async () => {
+        const current = tokens.get();
+        if (!current?.refreshToken) return null;
+        try {
+          const response = await send(refreshPath, {
+            method: "POST",
+            body: { refreshToken: current.refreshToken },
+          });
+          if (!response.ok) return null;
+          const body = (await readBody(response, "json")) as Partial<AuthTokens> | undefined;
+          if (!body?.accessToken || !body.refreshToken) return null;
+          const next: AuthTokens = { ...current, accessToken: body.accessToken, refreshToken: body.refreshToken };
+          tokens.set(next);
+          return next;
+        } catch {
+          return null;
+        }
+      })().finally(() => {
+        refreshing = null;
+      });
+    }
+    return refreshing;
+  }
+
+  function expireSession(): never {
+    if (tokens.get()) {
+      tokens.clear();
+      config.onSessionExpired?.();
+    }
+    throw new ApiError("Your session has expired. Please sign in again.", {
+      status: 401,
+      code: "SESSION_EXPIRED",
+      retryable: false,
+    });
+  }
+
   async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const useAuth = options.auth !== false;
     const responseType = options.responseType ?? "json";
     const accessToken = useAuth ? tokens.get()?.accessToken : undefined;
 
-    const response = await send(path, options, accessToken);
-    const body = await readBody(response, response.ok ? responseType : "json");
+    let response = await send(path, options, accessToken);
+    let body = await readBody(response, response.ok ? responseType : "json");
+
+    if (response.status === 401 && accessToken) {
+      const error = toApiError(401, body, response.headers.get("x-request-id"));
+      // The backend asks clients to refresh only on TOKEN_EXPIRED; a revoked
+      // session or an invalid token means signing in again.
+      if (SESSION_ENDING_CODES.has(error.code)) expireSession();
+      if (error.code !== "TOKEN_EXPIRED") throw error;
+      const renewed = await refresh();
+      if (!renewed) expireSession();
+      response = await send(path, options, renewed.accessToken);
+      body = await readBody(response, response.ok ? responseType : "json");
+      if (response.status === 401) expireSession();
+    }
 
     if (!response.ok) {
       throw toApiError(response.status, body, response.headers.get("x-request-id"));
