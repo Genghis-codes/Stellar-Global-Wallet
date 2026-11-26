@@ -1,1 +1,90 @@
 @import "tailwindcss";
+
+/*
+ * Theme tokens. Components only use the semantic utilities below
+ * (bg-surface, text-fg-muted, border-border, bg-primary, ...), never raw
+ * palette colours, so light and dark themes come from these variables alone.
+ * Dark mode is class based: ThemeProvider toggles `.dark` on <html>.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #f7f8fb;
+  --surface: #ffffff;
+  --surface-muted: #eef1f6;
+  --foreground: #0f172a;
+  --foreground-muted: #5b6477;
+  --border: #dde2ea;
+  --ring: #3b5bfd;
+  --primary: #3b5bfd;
+  --primary-foreground: #ffffff;
+  --primary-hover: #2f4ae0;
+  --success: #12805c;
+  --success-soft: #def7ec;
+  --warning: #a15c07;
+  --warning-soft: #fdf3d8;
+  --danger: #c8302f;
+  --danger-soft: #fde4e3;
+  --info: #1d6fb8;
+  --info-soft: #e0efff;
+  --overlay: rgb(15 23 42 / 0.5);
+  color-scheme: light;
+}
+
+.dark {
+  --background: #0b0f19;
+  --surface: #121826;
+  --surface-muted: #1b2333;
+  --foreground: #e7ebf3;
+  --foreground-muted: #96a0b5;
+  --border: #263044;
+  --ring: #7d93ff;
+  --primary: #6b83ff;
+  --primary-foreground: #0b0f19;
+  --primary-hover: #8a9dff;
+  --success: #3ccf91;
+  --success-soft: #0f2f24;
+  --warning: #f2b544;
+  --warning-soft: #33270c;
+  --danger: #ff6b6a;
+  --danger-soft: #3a1716;
+  --info: #5fb0ff;
+  --info-soft: #102a44;
+  --overlay: rgb(0 0 0 / 0.6);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-fg: var(--foreground);
+  --color-fg-muted: var(--foreground-muted);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-overlay: var(--overlay);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius-card: 0.875rem;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}
+
+:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
