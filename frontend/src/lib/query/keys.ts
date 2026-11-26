@@ -41,4 +41,7 @@ export const queryKeys = {
   email: {
     all: (accountId: string) => ["email", accountId] as const,
   },
+  devices: {
+    all: (accountId: string) => ["devices", accountId] as const,
+  },
 } as const;
