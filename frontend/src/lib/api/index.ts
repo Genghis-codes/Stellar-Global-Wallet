@@ -1,5 +1,6 @@
 import { env } from "@/lib/env";
 import { createApiClient } from "./client";
+import { accountApi } from "./endpoints/account";
 import { authApi } from "./endpoints/auth";
 import { WebStorageTokenStore } from "./tokens";
 
@@ -32,4 +33,5 @@ export const apiClient = createApiClient({
 /** Typed endpoint modules, one per backend route group. */
 export const api = {
   auth: authApi(apiClient),
+  account: accountApi(apiClient),
 };
