@@ -13,6 +13,7 @@ import { pendingTxsApi } from "./endpoints/pendingTxs";
 import { preferencesApi } from "./endpoints/preferences";
 import { priceApi } from "./endpoints/price";
 import { transactionsApi } from "./endpoints/transactions";
+import { walletApi } from "./endpoints/wallet";
 import { WebStorageTokenStore } from "./tokens";
 
 export * from "./client";
@@ -56,4 +57,5 @@ export const api = {
   preferences: preferencesApi(apiClient),
   price: priceApi(apiClient),
   transactions: transactionsApi(apiClient),
+  wallet: walletApi(apiClient),
 };

@@ -1,0 +1,92 @@
+import { describe, expect, it } from "vitest";
+import { callHeaders, errorResponse, jsonResponse, mockFetch } from "@/test/fetch";
+import { createApiClient } from "../client";
+import { isSubmitPending, walletApi } from "./wallet";
+
+const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+const DEST = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ";
+
+const unsigned = {
+  xdr: "AAAA",
+  networkPassphrase: "Test SDF Network ; September 2015",
+  fee: "100",
+  sequence: "42",
+  timeBounds: { minTime: "0", maxTime: "1700000000" },
+  expiresAt: "2023-11-14T22:13:20.000Z",
+};
+
+function setup(...responses: Response[]) {
+  const fetch = mockFetch(...responses);
+  return { fetch, wallet: walletApi(createApiClient({ baseUrl: "http://api.test", fetch })) };
+}
+
+const body = (fetch: ReturnType<typeof mockFetch>, index = 0) =>
+  JSON.parse(String(fetch.mock.calls[index]![1]?.body));
+
+describe("walletApi builds", () => {
+  it("posts a payment build and returns the unsigned envelope", async () => {
+    const { fetch, wallet } = setup(jsonResponse({ ...unsigned, operationType: "createAccount" }));
+    const result = await wallet.buildSend({ sourcePublicKey: G, destinationPublicKey: DEST, amount: "5", memo: "hi" });
+
+    expect(fetch.mock.calls[0]![0]).toBe("http://api.test/api/v1/wallet/send/build");
+    expect(fetch.mock.calls[0]![1]?.method).toBe("POST");
+    expect(body(fetch)).toEqual({ sourcePublicKey: G, destinationPublicKey: DEST, amount: "5", memo: "hi" });
+    expect(result.operationType).toBe("createAccount");
+  });
+
+  it("posts strict-send and strict-receive path payment builds", async () => {
+    const build = { ...unsigned, expectedSend: "10", expectedReceive: "9.5", slippageBps: 50, path: [] };
+    const { fetch, wallet } = setup(jsonResponse({ ...build, minReceive: "9.45" }), jsonResponse({ ...build, maxSend: "10.05" }));
+
+    await expect(
+      wallet.buildStrictSend({
+        sourcePublicKey: G,
+        destinationPublicKey: G,
+        sendAmount: "10",
+        destAsset: `USDC:${DEST}`,
+        quotedDestAmount: "9.5",
+        slippageBps: 50,
+      }),
+    ).resolves.toMatchObject({ minReceive: "9.45" });
+    await expect(
+      wallet.buildStrictReceive({
+        sourcePublicKey: G,
+        destinationPublicKey: G,
+        destAmount: "9.5",
+        destAsset: `USDC:${DEST}`,
+        quotedSendAmount: "10",
+      }),
+    ).resolves.toMatchObject({ maxSend: "10.05" });
+
+    expect(fetch.mock.calls[0]![0]).toBe("http://api.test/api/v1/wallet/path-payment-strict-send/build");
+    expect(body(fetch, 0)).toMatchObject({ sendAmount: "10", quotedDestAmount: "9.5", slippageBps: 50 });
+    expect(fetch.mock.calls[1]![0]).toBe("http://api.test/api/v1/wallet/path-payment-strict-receive/build");
+    expect(body(fetch, 1)).toMatchObject({ destAmount: "9.5", quotedSendAmount: "10" });
+  });
+
+  it("surfaces build errors as ApiErrors", async () => {
+    const { wallet } = setup(errorResponse(400, "MEMO_REQUIRED", "memo required"));
+    await expect(wallet.buildSend({ sourcePublicKey: G, destinationPublicKey: DEST, amount: "1" })).rejects.toMatchObject({
+      code: "MEMO_REQUIRED",
+    });
+  });
+});
+
+describe("walletApi.submit", () => {
+  it("sends only the signed XDR in the body and the actor in the query", async () => {
+    const { fetch, wallet } = setup(jsonResponse({ hash: "abc", ledger: 7, successful: true }));
+    const result = await wallet.submit("SIGNED", { account: G, idempotencyKey: "key-1" });
+
+    expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/wallet/submit?sourcePublicKey=${G}`);
+    expect(body(fetch)).toEqual({ signedXdr: "SIGNED" });
+    expect(callHeaders(fetch)["Idempotency-Key"]).toBe("key-1");
+    expect(isSubmitPending(result)).toBe(false);
+  });
+
+  it("recognises a pending (202) result", async () => {
+    const { fetch, wallet } = setup(jsonResponse({ hash: "abc", status: "pending" }, { status: 202 }));
+    const result = await wallet.submit("SIGNED", { account: G });
+    expect(isSubmitPending(result)).toBe(true);
+    expect(callHeaders(fetch)["Idempotency-Key"]).toBeUndefined();
+  });
+});
