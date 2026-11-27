@@ -9,7 +9,14 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { useDevices } from "@/hooks/useDevices";
 import type { Device } from "@/lib/api/endpoints/devices";
 import { describeError } from "@/lib/api/errors";
-import { currentPushEndpoint, defaultDeviceLabel, findCurrentDevice, readDeviceNames } from "@/lib/devices";
+import {
+  currentPushEndpoint,
+  defaultDeviceLabel,
+  findCurrentDevice,
+  readDeviceNames,
+  writeDeviceName,
+} from "@/lib/devices";
+import { RenameDeviceModal } from "./RenameDeviceModal";
 
 function formatDate(iso: string): string {
   const date = new Date(iso);
@@ -20,7 +27,8 @@ function formatDate(iso: string): string {
 export function DeviceSettings() {
   const devices = useDevices();
   const [endpoint, setEndpoint] = useState<string | null>(null);
-  const [names] = useState(() => readDeviceNames());
+  const [names, setNames] = useState(() => readDeviceNames());
+  const [renaming, setRenaming] = useState<Device | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -68,9 +76,26 @@ export function DeviceSettings() {
                   Last seen {formatDate(device.last_seen_at)}
                 </p>
               </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Rename ${names[device.id] ?? defaultDeviceLabel(device)}`}
+                  onClick={() => setRenaming(device)}
+                >
+                  Rename
+                </Button>
+              </div>
             </li>
           ))}
         </ul>
+      )}
+      {renaming && (
+        <RenameDeviceModal
+          name={names[renaming.id] ?? defaultDeviceLabel(renaming)}
+          onClose={() => setRenaming(null)}
+          onSave={(name) => setNames(writeDeviceName(renaming.id, name === defaultDeviceLabel(renaming) ? "" : name))}
+        />
       )}
     </Card>
   );

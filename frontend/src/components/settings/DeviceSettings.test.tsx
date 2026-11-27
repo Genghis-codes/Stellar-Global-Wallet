@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { api } from "@/lib/api";
 import type { Device } from "@/lib/api/endpoints/devices";
 import { ApiError } from "@/lib/api/errors";
@@ -63,5 +64,18 @@ describe("DeviceSettings", () => {
     );
     renderWithProviders(<DeviceSettings />);
     expect(await screen.findByText("Couldn't load your devices")).toBeInTheDocument();
+  });
+
+  it("renames a device locally", async () => {
+    vi.spyOn(api.devices, "list").mockResolvedValue(devices);
+    const user = userEvent.setup();
+    renderWithProviders(<DeviceSettings />);
+    await user.click(await screen.findByRole("button", { name: "Rename Mobile app" }));
+    const input = screen.getByRole("textbox", { name: "Device name" });
+    await user.clear(input);
+    await user.type(input, "My phone");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getAllByRole("listitem")[1]).toHaveTextContent("My phone");
+    expect(JSON.parse(window.localStorage.getItem("gw.deviceNames")!)).toEqual({ "2": "My phone" });
   });
 });
