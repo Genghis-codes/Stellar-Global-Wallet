@@ -8,7 +8,9 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { describeError } from "@/lib/api/errors";
 import { useAccountSigners, useCurrentAccount } from "@/hooks/useAccount";
+import { canRemoveSigner } from "@/lib/multisig/thresholds";
 import { AddSignerModal } from "./AddSignerModal";
+import { RemoveSignerModal } from "./RemoveSignerModal";
 import { SignerList } from "./SignerList";
 import { ThresholdsCard } from "./ThresholdsCard";
 
@@ -16,6 +18,7 @@ export function SignersView() {
   const account = useCurrentAccount();
   const signers = useAccountSigners(account);
   const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
 
   return (
     <>
@@ -56,6 +59,28 @@ export function SignersView() {
                 Add signer
               </Button>
             }
+            renderActions={(signer) => {
+              if (signer.isMaster) return null;
+              const verdict = canRemoveSigner(signers.data, signer.key);
+              return (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={!verdict.ok}
+                  title={verdict.reason}
+                  aria-label={`Remove signer ${signer.key}`}
+                  onClick={() => setRemoving(signer.key)}
+                >
+                  Remove
+                </Button>
+              );
+            }}
+          />
+          <RemoveSignerModal
+            signer={removing}
+            onClose={() => setRemoving(null)}
+            info={signers.data}
+            account={account}
           />
           <AddSignerModal open={adding} onClose={() => setAdding(false)} info={signers.data} account={account} />
         </div>
