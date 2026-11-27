@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { useDevices } from "@/hooks/useDevices";
+import { Modal } from "@/components/ui/Modal";
+import { useToast } from "@/components/ui/Toast";
+import { useDevices, useRevokeDevice } from "@/hooks/useDevices";
 import type { Device } from "@/lib/api/endpoints/devices";
 import { describeError } from "@/lib/api/errors";
 import {
@@ -29,6 +31,25 @@ export function DeviceSettings() {
   const [endpoint, setEndpoint] = useState<string | null>(null);
   const [names, setNames] = useState(() => readDeviceNames());
   const [renaming, setRenaming] = useState<Device | null>(null);
+  const [revoking, setRevoking] = useState<Device | null>(null);
+  const revoke = useRevokeDevice();
+  const toast = useToast();
+
+  function confirmRevoke(device: Device) {
+    revoke.mutate(device.id, {
+      onSuccess: () => {
+        setNames(writeDeviceName(device.id, ""));
+        setRevoking(null);
+        toast.show({
+          tone: "success",
+          title: "Device removed",
+          description: "It will no longer receive notifications.",
+        });
+      },
+      onError: (error) =>
+        toast.show({ tone: "danger", title: "Couldn't remove the device", description: describeError(error) }),
+    });
+  }
 
   useEffect(() => {
     let active = true;
@@ -85,6 +106,14 @@ export function DeviceSettings() {
                 >
                   Rename
                 </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  aria-label={`Revoke ${names[device.id] ?? defaultDeviceLabel(device)}`}
+                  onClick={() => setRevoking(device)}
+                >
+                  Revoke
+                </Button>
               </div>
             </li>
           ))}
@@ -97,6 +126,27 @@ export function DeviceSettings() {
           onSave={(name) => setNames(writeDeviceName(renaming.id, name === defaultDeviceLabel(renaming) ? "" : name))}
         />
       )}
+      <Modal
+        open={revoking !== null}
+        onClose={() => setRevoking(null)}
+        title="Revoke this device?"
+        description={
+          revoking?.id === currentId
+            ? "This browser will stop receiving notifications for this account."
+            : "The device will stop receiving notifications for this account."
+        }
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setRevoking(null)}>
+              Cancel
+            </Button>
+            <Button variant="danger" loading={revoke.isPending} onClick={() => revoking && confirmRevoke(revoking)}>
+              Revoke device
+            </Button>
+          </>
+        }
+      />
     </Card>
   );
 }

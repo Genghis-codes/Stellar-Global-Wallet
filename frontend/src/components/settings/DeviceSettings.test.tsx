@@ -78,4 +78,22 @@ describe("DeviceSettings", () => {
     expect(screen.getAllByRole("listitem")[1]).toHaveTextContent("My phone");
     expect(JSON.parse(window.localStorage.getItem("gw.deviceNames")!)).toEqual({ "2": "My phone" });
   });
+
+  it("revokes a device after confirmation", async () => {
+    vi.spyOn(api.devices, "list").mockResolvedValueOnce(devices).mockResolvedValue([devices[0]!]);
+    const remove = vi.spyOn(api.devices, "remove").mockResolvedValue({ message: "Device removed" });
+    const user = userEvent.setup();
+    renderWithProviders(<DeviceSettings />);
+
+    await user.click(await screen.findByRole("button", { name: "Revoke Mobile app" }));
+    const dialog = screen.getByRole("dialog", { name: "Revoke this device?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(remove).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Revoke Mobile app" }));
+    await user.click(screen.getByRole("button", { name: "Revoke device" }));
+    expect(remove).toHaveBeenCalledWith("2");
+    expect(await screen.findByText("Device removed")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(1);
+  });
 });
