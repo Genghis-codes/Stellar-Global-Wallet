@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { PenIcon, RefreshIcon } from "@/components/icons";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -11,6 +12,7 @@ import { isOpen } from "@/lib/multisig/pendingTx";
 import { useCurrentAccount } from "@/hooks/useAccount";
 import { usePendingTxs } from "@/hooks/usePendingTxs";
 import { PendingTxCard } from "./PendingTxCard";
+import { PendingTxDetailModal } from "./PendingTxDetailModal";
 
 /** Open transactions first, newest first within each group. */
 function sortPending(items: PendingTx[]): PendingTx[] {
@@ -22,6 +24,8 @@ function sortPending(items: PendingTx[]): PendingTx[] {
 export function PendingTxsView() {
   const account = useCurrentAccount();
   const pending = usePendingTxs(account);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = pending.data?.find((tx) => tx.id === selectedId) ?? null;
 
   return (
     <>
@@ -61,11 +65,20 @@ export function PendingTxsView() {
         <ul className="flex flex-col gap-3" aria-label="Pending transactions">
           {sortPending(pending.data).map((tx) => (
             <li key={tx.id}>
-              <PendingTxCard tx={tx} account={account} />
+              <PendingTxCard
+                tx={tx}
+                account={account}
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => setSelectedId(tx.id)}>
+                    Details
+                  </Button>
+                }
+              />
             </li>
           ))}
         </ul>
       )}
+      <PendingTxDetailModal tx={selected} onClose={() => setSelectedId(null)} />
     </>
   );
 }

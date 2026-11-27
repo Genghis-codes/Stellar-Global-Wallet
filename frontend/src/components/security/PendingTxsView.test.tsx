@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { api } from "@/lib/api";
 import type { PendingTx } from "@/lib/api/endpoints/pendingTxs";
 import { renderWithProviders } from "@/test/render";
@@ -45,5 +46,14 @@ describe("PendingTxsView", () => {
     vi.spyOn(api.pendingTxs, "list").mockResolvedValue([]);
     renderWithProviders(<PendingTxsView />);
     expect(await screen.findByText("Nothing to sign")).toBeInTheDocument();
+  });
+
+  it("opens the details with the collected signatures", async () => {
+    vi.spyOn(api.pendingTxs, "list").mockResolvedValue([tx({})]);
+    renderWithProviders(<PendingTxsView />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Details" }));
+    const dialog = screen.getByRole("dialog", { name: "Transaction details" });
+    expect(dialog).toHaveTextContent("Signatures · weight 1 of 2");
+    expect(dialog).toHaveTextContent("couldn't be decoded");
   });
 });
