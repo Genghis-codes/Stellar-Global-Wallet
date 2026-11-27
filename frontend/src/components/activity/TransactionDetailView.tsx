@@ -20,6 +20,7 @@ import { describeError } from "@/lib/api/errors";
 import { truncateAddress } from "@/lib/format";
 import { accountUrl, txUrl } from "@/lib/stellar/explorer";
 import { formatActivityTime } from "./ActivityRow";
+import { OperationList } from "./OperationList";
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -148,7 +149,12 @@ export function TransactionDetailView({ hash }: { hash: string }) {
       />
     );
   } else {
-    body = <Summary tx={tx.data} account={account} />;
+    body = (
+      <>
+        <Summary tx={tx.data} account={account} />
+        <OperationList operations={tx.data.operations} />
+      </>
+    );
   }
 
   return (
