@@ -110,6 +110,40 @@ export interface SubmitOptions {
   idempotencyKey?: string;
 }
 
+/** One pre-signing warning from POST /send/precheck (#64). */
+export interface SendPrecheckWarning {
+  code:
+    | "DESTINATION_IS_SOURCE"
+    | "SOURCE_NOT_FUNDED"
+    | "DESTINATION_NOT_FUNDED"
+    | "DESTINATION_WILL_BE_CREATED"
+    | "NO_TRUSTLINE"
+    | "TRUSTLINE_NOT_AUTHORIZED"
+    | "MEMO_REQUIRED"
+    | "AMOUNT_EXCEEDS_SPENDABLE";
+  message: string;
+  /** Submitting as-is would certainly fail or lose funds. */
+  blocking: boolean;
+}
+
+export interface SendPrecheckResult {
+  warnings: SendPrecheckWarning[];
+  /** Any warning is blocking: don't offer "Sign". */
+  blocking: boolean;
+  operationType: SendOperationType;
+  /** Source's spendable balance of the asset; absent when the source is unfunded. */
+  spendable?: string;
+}
+
+export interface SendPrecheckRequest {
+  sourcePublicKey: AccountId;
+  /** G... only: pass the base account of a muxed destination. */
+  destinationPublicKey: AccountId;
+  amount: string;
+  asset?: string;
+  memo?: string;
+}
+
 const actor = (account: AccountId) => ({ sourcePublicKey: account });
 
 export function walletApi(client: ApiClient) {
@@ -125,6 +159,14 @@ export function walletApi(client: ApiClient) {
 
     buildStrictReceive(body: StrictReceiveBuildRequest) {
       return client.post<PathPaymentBuild>("/api/v1/wallet/path-payment-strict-receive/build", body);
+    },
+
+    /**
+     * Read-only pre-signing checks: every reason the send would fail or lose
+     * funds, as warnings. Always 200 for a well-formed request.
+     */
+    precheck(body: SendPrecheckRequest) {
+      return client.post<SendPrecheckResult>("/api/v1/wallet/send/precheck", body);
     },
 
     /** Submit a signed envelope (plain or fee-bump) built by this API. */

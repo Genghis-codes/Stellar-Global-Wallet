@@ -90,3 +90,20 @@ describe("walletApi.submit", () => {
     expect(callHeaders(fetch)["Idempotency-Key"]).toBeUndefined();
   });
 });
+
+describe("walletApi.precheck", () => {
+  it("posts the send parameters and returns the warnings", async () => {
+    const result = {
+      warnings: [{ code: "DESTINATION_WILL_BE_CREATED", message: "created", blocking: false }],
+      blocking: false,
+      operationType: "createAccount",
+      spendable: "98.5",
+    };
+    const { fetch, wallet } = setup(jsonResponse(result));
+    await expect(
+      wallet.precheck({ sourcePublicKey: G, destinationPublicKey: DEST, amount: "5", asset: "XLM" }),
+    ).resolves.toEqual(result);
+    expect(fetch.mock.calls[0]![0]).toBe("http://api.test/api/v1/wallet/send/precheck");
+    expect(body(fetch)).toEqual({ sourcePublicKey: G, destinationPublicKey: DEST, amount: "5", asset: "XLM" });
+  });
+});
