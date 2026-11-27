@@ -6,6 +6,7 @@ import { Card, CardBody } from "@/components/ui/Card";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import { useCurrentAccount } from "@/hooks/useAccount";
 import { filtersFromSearchParams, filtersToSearchParams, type ActivityFilters } from "@/lib/activity/filters";
+import { ExportCsvButton } from "./ExportCsvButton";
 import { PaymentsFeed } from "./PaymentsFeed";
 import { TransactionsFeed } from "./TransactionsFeed";
 import { UnifiedFeed } from "./UnifiedFeed";
@@ -47,7 +48,11 @@ export function ActivityView() {
 
   return (
     <>
-      <PageHeader title="Activity" description="Payments and transactions on your account, newest first." />
+      <PageHeader
+        title="Activity"
+        description="Payments and transactions on your account, newest first."
+        actions={<ExportCsvButton account={account} />}
+      />
       <Card>
         <CardBody>
           <Tabs items={items} value={tab} onChange={selectTab} aria-label="Activity views" />
