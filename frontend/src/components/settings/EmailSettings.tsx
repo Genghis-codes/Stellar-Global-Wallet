@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/Toast";
 import { useEmailStatus, useSubmitEmail } from "@/hooks/useEmail";
 import { EMAIL_ERROR_CODES } from "@/lib/api/endpoints/email";
 import { describeError, isApiError } from "@/lib/api/errors";
+import { VerifyEmailForm } from "./VerifyEmailForm";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -119,9 +120,7 @@ export function EmailSettings() {
       </Card>
 
       {pending && (
-        <p role="status" className="text-sm text-fg-muted">
-          Open the link in the email sent to {pending} to finish verifying it.
-        </p>
+        <VerifyEmailForm email={pending} onVerified={() => setPending(null)} onResend={() => submit.mutate(pending)} />
       )}
     </div>
   );
