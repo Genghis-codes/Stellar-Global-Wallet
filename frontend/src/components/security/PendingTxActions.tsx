@@ -10,7 +10,7 @@ import type { PendingTx } from "@/lib/api/endpoints/pendingTxs";
 import { queryKeys } from "@/lib/query/keys";
 import { hasSigned, isOpen } from "@/lib/multisig/pendingTx";
 import { networkPassphrase } from "@/lib/stellar/network";
-import { useAddSignatures } from "@/hooks/usePendingTxs";
+import { useAddSignatures, useCancelPendingTx } from "@/hooks/usePendingTxs";
 import { phaseLabel, useSignAndSubmit, useTxErrorToast, type TxPhase } from "@/hooks/useSignAndSubmit";
 
 export interface PendingTxActionsProps {
@@ -26,6 +26,8 @@ export function PendingTxActions({ tx, account, onBusyChange }: PendingTxActions
   const toastError = useTxErrorToast();
   const { sign } = useSignAndSubmit();
   const addSignatures = useAddSignatures(account);
+  const cancelTx = useCancelPendingTx(account);
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const [signPhase, setSignPhase] = useState<TxPhase>("idle");
   const [submitPhase, setSubmitPhase] = useState<TxPhase>("idle");
   const queryClient = useQueryClient();
@@ -85,11 +87,41 @@ export function PendingTxActions({ tx, account, onBusyChange }: PendingTxActions
     });
   }
 
+  async function cancel() {
+    onBusyChange?.(true);
+    try {
+      await cancelTx.mutateAsync(tx.id);
+      toast.show({ title: "Transaction cancelled", tone: "info" });
+    } catch (error) {
+      toastError(error, "Couldn't cancel the transaction");
+    } finally {
+      setConfirmCancel(false);
+      onBusyChange?.(false);
+    }
+  }
+
   const open = isOpen(tx);
   const signed = hasSigned(tx, account);
 
   return (
     <>
+      {open && tx.createdBy === account && (
+        confirmCancel ? (
+          <>
+            <span className="self-center text-sm text-fg">Cancel for every signer?</span>
+            <Button variant="secondary" onClick={() => setConfirmCancel(false)} disabled={cancelTx.isPending}>
+              Keep
+            </Button>
+            <Button variant="danger" onClick={() => void cancel()} loading={cancelTx.isPending}>
+              Yes, cancel
+            </Button>
+          </>
+        ) : (
+          <Button variant="ghost" className="mr-auto" onClick={() => setConfirmCancel(true)}>
+            Cancel transaction
+          </Button>
+        )
+      )}
       {open && signed && <span className="mr-auto self-center text-sm text-fg-muted">You signed this.</span>}
       {open && !signed && (
         <Button onClick={() => void coSign()} loading={signPhase !== "idle"}>

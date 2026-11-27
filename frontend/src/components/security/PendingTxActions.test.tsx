@@ -80,3 +80,20 @@ describe("PendingTxActions: submit", () => {
     expect(screen.getByText(/account owner can submit/)).toBeInTheDocument();
   });
 });
+
+describe("PendingTxActions: cancel", () => {
+  it("lets the creator cancel after confirming", async () => {
+    const cancel = vi.spyOn(api.pendingTxs, "cancel").mockResolvedValue(pendingTx({ status: "cancelled" }));
+    renderWithProviders(<PendingTxActions tx={pendingTx({ createdBy: G, collectedSigners: [G] })} account={G} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Cancel transaction" }));
+    await user.click(screen.getByRole("button", { name: "Yes, cancel" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("tx-1"));
+    expect(await screen.findByText("Transaction cancelled")).toBeInTheDocument();
+  });
+
+  it("is not offered to other signers", () => {
+    renderWithProviders(<PendingTxActions tx={pendingTx()} account={G} />);
+    expect(screen.queryByRole("button", { name: "Cancel transaction" })).not.toBeInTheDocument();
+  });
+});
