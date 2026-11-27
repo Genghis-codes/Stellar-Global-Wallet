@@ -180,6 +180,36 @@ export interface StrictReceivePathsRequest {
   sourceAsset?: string;
 }
 
+/** SEP-7 `pay` fields, snake_case as the backend sends them. */
+export interface Sep7PayFields {
+  destination: string;
+  amount?: string;
+  asset_code?: string;
+  asset_issuer?: string;
+  memo?: string;
+  memo_type?: string;
+  origin_domain?: string;
+  signature?: string;
+}
+
+/** POST /payment-requests body; `destination` must be a G... account. */
+export interface PaymentRequestInput {
+  destination: AccountId;
+  amount?: string;
+  /** Omit (or "XLM") for native; issued assets need asset_issuer too. */
+  asset_code?: string;
+  asset_issuer?: string;
+  memo?: string;
+  memo_type?: "MEMO_TEXT" | "MEMO_ID" | "MEMO_HASH" | "MEMO_RETURN";
+  origin_domain?: string;
+}
+
+/** POST /payment-requests/parse — the fields plus anything wrong with them. */
+export interface ParsedPaymentRequest {
+  fields: Sep7PayFields;
+  warnings: string[];
+}
+
 const actor = (account: AccountId) => ({ sourcePublicKey: account });
 
 export function walletApi(client: ApiClient) {
@@ -225,6 +255,16 @@ export function walletApi(client: ApiClient) {
         signal,
       });
       return paths;
+    },
+
+    /** Build a SEP-7 `web+stellar:pay?...` URI. */
+    createPaymentRequest(account: AccountId, body: PaymentRequestInput) {
+      return client.post<{ uri: string }>("/api/v1/wallet/payment-requests", body, { query: actor(account) });
+    },
+
+    /** Parse and sanity-check a SEP-7 pay URI (throws a 400 ApiError when it isn't one). */
+    parsePaymentRequest(account: AccountId, uri: string) {
+      return client.post<ParsedPaymentRequest>("/api/v1/wallet/payment-requests/parse", { uri }, { query: actor(account) });
     },
 
     /** Submit a signed envelope (plain or fee-bump) built by this API. */

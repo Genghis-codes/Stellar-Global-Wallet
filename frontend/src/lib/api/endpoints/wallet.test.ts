@@ -134,3 +134,21 @@ describe("walletApi paths", () => {
     expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/wallet/paths/strict-receive?sourcePublicKey=${G}`);
   });
 });
+
+describe("walletApi payment requests", () => {
+  it("creates a SEP-7 pay URI", async () => {
+    const uri = `web+stellar:pay?destination=${G}&amount=5`;
+    const { fetch, wallet } = setup(jsonResponse({ uri }));
+    await expect(wallet.createPaymentRequest(G, { destination: G, amount: "5" })).resolves.toEqual({ uri });
+    expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/wallet/payment-requests?sourcePublicKey=${G}`);
+    expect(body(fetch)).toEqual({ destination: G, amount: "5" });
+  });
+
+  it("parses a URI into fields and warnings", async () => {
+    const parsed = { fields: { destination: G, memo: "7", memo_type: "MEMO_ID" }, warnings: [] };
+    const { fetch, wallet } = setup(jsonResponse(parsed));
+    await expect(wallet.parsePaymentRequest(G, "web+stellar:pay?x")).resolves.toEqual(parsed);
+    expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/wallet/payment-requests/parse?sourcePublicKey=${G}`);
+    expect(body(fetch)).toEqual({ uri: "web+stellar:pay?x" });
+  });
+});
