@@ -56,7 +56,13 @@ export function DashboardView() {
         <div className="flex flex-col gap-4">
           <PortfolioValueCard portfolio={portfolio} />
           <BalanceSummary xlmBalance={xlm} reserves={reserves.data.reserves} />
-          <BalanceList balances={reserves.data.balances} />
+          <BalanceList
+            balances={reserves.data.balances}
+            valuations={
+              portfolio.valuation ? new Map(portfolio.valuation.holdings.map((h) => [h.asset, h])) : undefined
+            }
+            currency={portfolio.currency}
+          />
         </div>
       )}
     </>

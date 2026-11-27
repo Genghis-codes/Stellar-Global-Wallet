@@ -3,15 +3,20 @@ import { AmountDisplay } from "@/components/ui/AmountDisplay";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
 import type { ReservesResponse } from "@/lib/api/endpoints/account";
+import { formatFiat } from "@/lib/format";
+import type { Valuation } from "@/lib/price/valuation";
 import { assetFromBalanceLine, assetId, compareAssets, isNative } from "@/lib/stellar/asset";
 import { accountUrl } from "@/lib/stellar/explorer";
 
 export interface BalanceListProps {
   balances: ReservesResponse["balances"];
+  /** Fiat values by asset id; omit to hide fiat values (no price source). */
+  valuations?: Map<string, Valuation>;
+  currency?: string;
 }
 
 /** Every asset the account holds, native first, with total and spendable amounts. */
-export function BalanceList({ balances }: BalanceListProps) {
+export function BalanceList({ balances, valuations, currency = "USD" }: BalanceListProps) {
   const rows = balances
     .map((line) => ({ line, asset: assetFromBalanceLine(line) }))
     .filter((row): row is { line: typeof row.line; asset: NonNullable<typeof row.asset> } => row.asset !== null)
@@ -49,6 +54,7 @@ export function BalanceList({ balances }: BalanceListProps) {
               <p className="font-medium text-fg">
                 <AmountDisplay amount={line.balance} asset={asset.code} />
               </p>
+              {valuations && <FiatValue valuation={valuations.get(assetId(asset))} currency={currency} />}
               {line.spendable !== line.balance && (
                 <p className="text-xs text-fg-muted">
                   <AmountDisplay amount={line.spendable} /> spendable
@@ -59,5 +65,21 @@ export function BalanceList({ balances }: BalanceListProps) {
         ))}
       </ul>
     </Card>
+  );
+}
+
+function FiatValue({ valuation, currency }: { valuation: Valuation | undefined; currency: string }) {
+  if (!valuation || valuation.value === null) {
+    return <p className="text-xs text-fg-muted">No price</p>;
+  }
+  return (
+    <p className="text-xs text-fg-muted">
+      {formatFiat(valuation.value, currency)}
+      {valuation.state === "stale" && (
+        <span className="ml-1 text-warning" title="This price may be out of date">
+          (stale)
+        </span>
+      )}
+    </p>
   );
 }

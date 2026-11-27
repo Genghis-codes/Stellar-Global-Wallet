@@ -52,6 +52,7 @@ describe("DashboardView", () => {
     expect(items[0]).toHaveTextContent("XLM");
     expect(items[1]).toHaveTextContent("USDC");
     expect(items[1]).toHaveTextContent("25.50USDC");
+    expect(screen.queryByText("No price")).toBeNull();
   });
 
   it("shows the total portfolio value when prices are available", async () => {
@@ -65,11 +66,14 @@ describe("DashboardView", () => {
     renderWithProviders(<DashboardView />);
     expect(await screen.findByText("Total portfolio value")).toBeInTheDocument();
     expect(await screen.findByText("$35.50")).toBeInTheDocument();
+    const items = screen.getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("$10.00");
+    expect(items[1]).toHaveTextContent("$25.50");
   });
 
   it("offers Friendbot funding for an unfunded testnet account", async () => {
     vi.spyOn(api.account, "reserves").mockRejectedValue(
-      new ApiError("not found", { status: 404, code: "ACCOUNT_NOT_FOUND" }),
+      new ApiError("not found", { status: 404, code: "ACCOUNT_NOT_FOUND" })
     );
     const fund = vi.spyOn(api.dev, "fund").mockResolvedValue({ account: G, funded: true, alreadyFunded: false });
     renderWithProviders(<DashboardView />);
@@ -80,7 +84,7 @@ describe("DashboardView", () => {
 
   it("shows a retryable error state", async () => {
     vi.spyOn(api.account, "reserves").mockRejectedValue(
-      new ApiError("Horizon is unavailable", { status: 502, code: "HORIZON_UNAVAILABLE" }),
+      new ApiError("Horizon is unavailable", { status: 502, code: "HORIZON_UNAVAILABLE" })
     );
     renderWithProviders(<DashboardView />);
     expect(await screen.findByText("Couldn't load your balances")).toBeInTheDocument();
