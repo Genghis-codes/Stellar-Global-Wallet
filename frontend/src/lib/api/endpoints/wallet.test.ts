@@ -107,3 +107,30 @@ describe("walletApi.precheck", () => {
     expect(body(fetch)).toEqual({ sourcePublicKey: G, destinationPublicKey: DEST, amount: "5", asset: "XLM" });
   });
 });
+
+describe("walletApi paths", () => {
+  const record = {
+    source_asset_type: "native",
+    source_amount: "10",
+    destination_asset_type: "credit_alphanum4",
+    destination_asset_code: "USDC",
+    destination_asset_issuer: DEST,
+    destination_amount: "1.2",
+    path: [],
+  };
+
+  it("unwraps strict-send paths and scopes the request to the account", async () => {
+    const { fetch, wallet } = setup(jsonResponse({ paths: [record] }));
+    await expect(
+      wallet.strictSendPaths(G, { sourceAmount: "10", sourceAsset: "XLM", destinationAsset: `USDC:${DEST}` }),
+    ).resolves.toEqual([record]);
+    expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/wallet/paths/strict-send?sourcePublicKey=${G}`);
+    expect(body(fetch)).toEqual({ sourceAmount: "10", sourceAsset: "XLM", destinationAsset: `USDC:${DEST}` });
+  });
+
+  it("unwraps strict-receive paths", async () => {
+    const { fetch, wallet } = setup(jsonResponse({ paths: [] }));
+    await expect(wallet.strictReceivePaths(G, { destinationAmount: "1", destinationAsset: "XLM" })).resolves.toEqual([]);
+    expect(fetch.mock.calls[0]![0]).toBe(`http://api.test/api/v1/wallet/paths/strict-receive?sourcePublicKey=${G}`);
+  });
+});

@@ -144,6 +144,42 @@ export interface SendPrecheckRequest {
   memo?: string;
 }
 
+type HorizonAssetType = "native" | "credit_alphanum4" | "credit_alphanum12";
+
+/** One intermediate asset of a path (Horizon shape). */
+export interface PathAssetHop {
+  asset_type: HorizonAssetType;
+  asset_code?: string;
+  asset_issuer?: string;
+}
+
+/** A Horizon path record relayed by /paths/strict-send and /paths/strict-receive (at most 5). */
+export interface PaymentPath {
+  source_asset_type: HorizonAssetType;
+  source_asset_code?: string;
+  source_asset_issuer?: string;
+  source_amount: string;
+  destination_asset_type: HorizonAssetType;
+  destination_asset_code?: string;
+  destination_asset_issuer?: string;
+  destination_amount: string;
+  path: PathAssetHop[];
+}
+
+export interface StrictSendPathsRequest {
+  sourceAmount: string;
+  /** Defaults to XLM. */
+  sourceAsset?: string;
+  destinationAsset: string;
+}
+
+export interface StrictReceivePathsRequest {
+  destinationAmount: string;
+  destinationAsset: string;
+  /** Defaults to XLM. */
+  sourceAsset?: string;
+}
+
 const actor = (account: AccountId) => ({ sourcePublicKey: account });
 
 export function walletApi(client: ApiClient) {
@@ -167,6 +203,28 @@ export function walletApi(client: ApiClient) {
      */
     precheck(body: SendPrecheckRequest) {
       return client.post<SendPrecheckResult>("/api/v1/wallet/send/precheck", body);
+    },
+
+    /**
+     * Routes that turn exactly `sourceAmount` of the source asset into the
+     * destination asset. (`destinationPublicKey` is not sent: the backend
+     * would then search every asset that account holds.)
+     */
+    async strictSendPaths(account: AccountId, body: StrictSendPathsRequest, signal?: AbortSignal) {
+      const { paths } = await client.post<{ paths: PaymentPath[] }>("/api/v1/wallet/paths/strict-send", body, {
+        query: actor(account),
+        signal,
+      });
+      return paths;
+    },
+
+    /** Routes that deliver exactly `destinationAmount` of the destination asset. */
+    async strictReceivePaths(account: AccountId, body: StrictReceivePathsRequest, signal?: AbortSignal) {
+      const { paths } = await client.post<{ paths: PaymentPath[] }>("/api/v1/wallet/paths/strict-receive", body, {
+        query: actor(account),
+        signal,
+      });
+      return paths;
     },
 
     /** Submit a signed envelope (plain or fee-bump) built by this API. */
