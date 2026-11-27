@@ -1,5 +1,5 @@
 import type { ComponentType, SVGProps } from "react";
-import { HomeIcon, SettingsIcon } from "@/components/icons";
+import { ActivityIcon, HomeIcon, SettingsIcon } from "@/components/icons";
 
 export interface NavItem {
   /** App route (inside the (app) route group). */
@@ -17,6 +17,7 @@ export interface NavItem {
  */
 export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: HomeIcon },
+  { href: "/activity", label: "Activity", icon: ActivityIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
