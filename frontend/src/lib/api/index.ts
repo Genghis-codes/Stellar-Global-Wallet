@@ -12,6 +12,7 @@ import { multisigApi } from "./endpoints/multisig";
 import { pendingTxsApi } from "./endpoints/pendingTxs";
 import { preferencesApi } from "./endpoints/preferences";
 import { priceApi } from "./endpoints/price";
+import { resolveApi } from "./endpoints/resolve";
 import { transactionsApi } from "./endpoints/transactions";
 import { walletApi } from "./endpoints/wallet";
 import { WebStorageTokenStore } from "./tokens";
@@ -56,6 +57,7 @@ export const api = {
   pendingTxs: pendingTxsApi(apiClient),
   preferences: preferencesApi(apiClient),
   price: priceApi(apiClient),
+  resolve: resolveApi(apiClient),
   transactions: transactionsApi(apiClient),
   wallet: walletApi(apiClient),
 };
