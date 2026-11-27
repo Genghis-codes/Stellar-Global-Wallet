@@ -131,3 +131,13 @@ export function PenIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function CoinsIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <ellipse cx="9" cy="7" rx="6" ry="3" />
+      <path d="M3 7v5c0 1.7 2.7 3 6 3s6-1.3 6-3V7" />
+      <path d="M9 18c0 1.7 2.7 3 6 3s6-1.3 6-3v-5c0-1.6-2.4-2.9-5.5-3" />
+    </svg>
+  );
+}
