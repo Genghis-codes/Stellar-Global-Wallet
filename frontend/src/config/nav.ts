@@ -1,5 +1,5 @@
 import type { ComponentType, SVGProps } from "react";
-import { ActivityIcon, HomeIcon, KeyIcon, SettingsIcon } from "@/components/icons";
+import { ActivityIcon, HomeIcon, KeyIcon, PenIcon, SettingsIcon } from "@/components/icons";
 
 export interface NavItem {
   /** App route (inside the (app) route group). */
@@ -19,6 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: HomeIcon },
   { href: "/activity", label: "Activity", icon: ActivityIcon },
   { href: "/security/signers", label: "Signers", icon: KeyIcon },
+  { href: "/security/pending", label: "Pending", icon: PenIcon },
   { href: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 
