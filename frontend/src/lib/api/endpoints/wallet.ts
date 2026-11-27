@@ -267,6 +267,19 @@ export function walletApi(client: ApiClient) {
       return client.post<ParsedPaymentRequest>("/api/v1/wallet/payment-requests/parse", { uri }, { query: actor(account) });
     },
 
+    /**
+     * Have the server's fee sponsor pay: it wraps the *signed* inner
+     * transaction in a fee bump and submits it. 503 FEE_SPONSOR_NOT_CONFIGURED
+     * when the server has no sponsor, 402 FEE_SPONSOR_BUDGET_EXCEEDED or 400
+     * FEE_SPONSOR_INELIGIBLE when the policy says no.
+     */
+    sponsorFee(account: AccountId, signedXdr: string) {
+      return client.post<{ hash: string; successful: boolean }>("/api/v1/wallet/sponsor-fee", {
+        transactionXdr: signedXdr,
+        innerAccount: account,
+      });
+    },
+
     /** Submit a signed envelope (plain or fee-bump) built by this API. */
     submit(signedXdr: string, { account, idempotencyKey }: SubmitOptions) {
       return client.post<SubmitResult>("/api/v1/wallet/submit", { signedXdr }, {

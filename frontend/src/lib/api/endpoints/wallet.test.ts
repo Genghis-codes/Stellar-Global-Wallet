@@ -152,3 +152,17 @@ describe("walletApi payment requests", () => {
     expect(body(fetch)).toEqual({ uri: "web+stellar:pay?x" });
   });
 });
+
+describe("walletApi.sponsorFee", () => {
+  it("posts the signed inner transaction with the account as innerAccount", async () => {
+    const { fetch, wallet } = setup(jsonResponse({ hash: "h", successful: true }));
+    await expect(wallet.sponsorFee(G, "SIGNED")).resolves.toEqual({ hash: "h", successful: true });
+    expect(fetch.mock.calls[0]![0]).toBe("http://api.test/api/v1/wallet/sponsor-fee");
+    expect(body(fetch)).toEqual({ transactionXdr: "SIGNED", innerAccount: G });
+  });
+
+  it("reports an unconfigured sponsor", async () => {
+    const { wallet } = setup(errorResponse(503, "FEE_SPONSOR_NOT_CONFIGURED"));
+    await expect(wallet.sponsorFee(G, "SIGNED")).rejects.toMatchObject({ code: "FEE_SPONSOR_NOT_CONFIGURED" });
+  });
+});
