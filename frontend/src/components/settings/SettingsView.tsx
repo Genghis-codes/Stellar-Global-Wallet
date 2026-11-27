@@ -6,6 +6,7 @@ import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { DeviceSettings } from "./DeviceSettings";
 import { EmailSettings } from "./EmailSettings";
+import { NetworkSettings } from "./NetworkSettings";
 import { PreferencesSettings } from "./PreferencesSettings";
 
 /** Settings sections, in tab order. The selected one is kept in `?tab=`. */
@@ -15,6 +16,7 @@ function settingsTabs(): TabItem[] {
     { id: "email", label: "Email", content: <EmailSettings /> },
     { id: "devices", label: "Devices", content: <DeviceSettings /> },
     { id: "appearance", label: "Appearance", content: <AppearanceSettings /> },
+    { id: "network", label: "Network", content: <NetworkSettings /> },
   ];
 }
 
