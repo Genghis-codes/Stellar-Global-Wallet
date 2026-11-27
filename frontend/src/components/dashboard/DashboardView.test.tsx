@@ -34,7 +34,13 @@ const reserves: ReservesResponse = {
   ],
 };
 
-beforeEach(() => vi.restoreAllMocks());
+const flags = { multisig: false, feeBump: false, pathPayments: false, recovery: false, priceOracle: false };
+
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.spyOn(api.config, "flags").mockResolvedValue(flags);
+  vi.spyOn(api.preferences, "get").mockResolvedValue({});
+});
 
 describe("DashboardView", () => {
   it("shows the XLM summary and the asset list", async () => {
@@ -46,6 +52,19 @@ describe("DashboardView", () => {
     expect(items[0]).toHaveTextContent("XLM");
     expect(items[1]).toHaveTextContent("USDC");
     expect(items[1]).toHaveTextContent("25.50USDC");
+  });
+
+  it("shows the total portfolio value when prices are available", async () => {
+    vi.spyOn(api.config, "flags").mockResolvedValue({ ...flags, priceOracle: true });
+    vi.spyOn(api.account, "reserves").mockResolvedValue(reserves);
+    const updatedAt = new Date().toISOString();
+    vi.spyOn(api.price, "many").mockResolvedValue([
+      { asset: "XLM", price: "0.1", currency: "USD", source: "stellar_dex", updatedAt },
+      { asset: `USDC:${ISSUER}`, price: "1", currency: "USD", source: "stellar_dex", updatedAt },
+    ]);
+    renderWithProviders(<DashboardView />);
+    expect(await screen.findByText("Total portfolio value")).toBeInTheDocument();
+    expect(await screen.findByText("$35.50")).toBeInTheDocument();
   });
 
   it("offers Friendbot funding for an unfunded testnet account", async () => {

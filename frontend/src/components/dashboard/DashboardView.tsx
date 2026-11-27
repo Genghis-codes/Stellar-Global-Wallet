@@ -7,13 +7,16 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { describeError } from "@/lib/api/errors";
 import { isUnfundedAccountError, useAccountReserves, useCurrentAccount } from "@/hooks/useAccount";
+import { usePortfolioValue } from "@/hooks/usePrices";
 import { BalanceList } from "./BalanceList";
 import { BalanceSummary } from "./BalanceSummary";
+import { PortfolioValueCard } from "./PortfolioValueCard";
 import { UnfundedAccount } from "./UnfundedAccount";
 
 export function DashboardView() {
   const account = useCurrentAccount();
   const reserves = useAccountReserves(account);
+  const portfolio = usePortfolioValue(account);
   const xlm = reserves.data?.balances.find((line) => line.asset_type === "native")?.balance ?? "0";
 
   return (
@@ -51,6 +54,7 @@ export function DashboardView() {
         )
       ) : (
         <div className="flex flex-col gap-4">
+          <PortfolioValueCard portfolio={portfolio} />
           <BalanceSummary xlmBalance={xlm} reserves={reserves.data.reserves} />
           <BalanceList balances={reserves.data.balances} />
         </div>
