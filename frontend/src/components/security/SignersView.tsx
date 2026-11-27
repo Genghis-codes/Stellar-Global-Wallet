@@ -10,6 +10,7 @@ import { describeError } from "@/lib/api/errors";
 import { useAccountSigners, useCurrentAccount } from "@/hooks/useAccount";
 import { canRemoveSigner } from "@/lib/multisig/thresholds";
 import { AddSignerModal } from "./AddSignerModal";
+import { EditThresholdsModal } from "./EditThresholdsModal";
 import { RemoveSignerModal } from "./RemoveSignerModal";
 import { SignerList } from "./SignerList";
 import { ThresholdsCard } from "./ThresholdsCard";
@@ -19,6 +20,7 @@ export function SignersView() {
   const signers = useAccountSigners(account);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
 
   return (
     <>
@@ -50,7 +52,17 @@ export function SignersView() {
         />
       ) : (
         <div className="flex flex-col gap-4">
-          <ThresholdsCard info={signers.data} />
+          <ThresholdsCard
+            info={signers.data}
+            action={
+              <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            }
+          />
+          {editing && (
+            <EditThresholdsModal open onClose={() => setEditing(false)} info={signers.data} account={account} />
+          )}
           <SignerList
             info={signers.data}
             account={account}
