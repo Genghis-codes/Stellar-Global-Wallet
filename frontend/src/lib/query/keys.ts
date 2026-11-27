@@ -76,4 +76,7 @@ export const queryKeys = {
     list: (accountId: string) => ["pendingTxs", accountId, "list"] as const,
     detail: (accountId: string, id: string) => ["pendingTxs", accountId, "detail", id] as const,
   },
+  resolve: {
+    address: (address: string) => ["resolve", address] as const,
+  },
 } as const;
