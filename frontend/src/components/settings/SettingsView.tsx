@@ -4,12 +4,14 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { EmailSettings } from "./EmailSettings";
 import { PreferencesSettings } from "./PreferencesSettings";
 
 /** Settings sections, in tab order. The selected one is kept in `?tab=`. */
 function settingsTabs(): TabItem[] {
   return [
     { id: "preferences", label: "Preferences", content: <PreferencesSettings /> },
+    { id: "email", label: "Email", content: <EmailSettings /> },
     { id: "appearance", label: "Appearance", content: <AppearanceSettings /> },
   ];
 }
