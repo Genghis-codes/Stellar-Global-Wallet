@@ -62,3 +62,21 @@ describe("PendingTxActions: co-sign", () => {
     expect(screen.getByText("You signed this.")).toBeInTheDocument();
   });
 });
+
+describe("PendingTxActions: submit", () => {
+  it("submits a ready transaction with an idempotency key", async () => {
+    const submit = vi.spyOn(api.multisig, "submit").mockResolvedValue({ hash: "h", successful: true });
+    const ready = pendingTx({ status: "ready", collectedSigners: [B, G], collectedWeight: 2 });
+    renderWithProviders(<PendingTxActions tx={ready} account={G} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith("AAAA", "pending-tx:tx-1"));
+    expect(await screen.findByText("Transaction submitted")).toBeInTheDocument();
+  });
+
+  it("leaves submitting to the source account", () => {
+    const ready = pendingTx({ account: B, status: "ready", collectedSigners: [B, G], collectedWeight: 2 });
+    renderWithProviders(<PendingTxActions tx={ready} account={G} />);
+    expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument();
+    expect(screen.getByText(/account owner can submit/)).toBeInTheDocument();
+  });
+});
