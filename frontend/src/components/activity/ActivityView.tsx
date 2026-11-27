@@ -8,6 +8,7 @@ import { useCurrentAccount } from "@/hooks/useAccount";
 import { filtersFromSearchParams, filtersToSearchParams, type ActivityFilters } from "@/lib/activity/filters";
 import { PaymentsFeed } from "./PaymentsFeed";
 import { TransactionsFeed } from "./TransactionsFeed";
+import { UnifiedFeed } from "./UnifiedFeed";
 
 export function ActivityView() {
   const account = useCurrentAccount();
@@ -20,6 +21,7 @@ export function ActivityView() {
   const items: TabItem[] = [
     { id: "payments", label: "Payments", content: <PaymentsFeed account={account} filters={filters} onFiltersChange={setFilters} /> },
     { id: "transactions", label: "Transactions", content: <TransactionsFeed account={account} /> },
+    { id: "all", label: "All activity", content: <UnifiedFeed account={account} /> },
   ];
   const requested = params.get("tab");
   const tab = items.some((item) => item.id === requested) ? requested! : items[0]!.id;
