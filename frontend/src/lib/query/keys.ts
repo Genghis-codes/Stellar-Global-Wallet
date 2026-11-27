@@ -34,6 +34,7 @@ export const queryKeys = {
     networkInfo: () => ["config", "network-info"] as const,
     fees: () => ["config", "fees"] as const,
     flags: () => ["config", "flags"] as const,
+    health: () => ["config", "health"] as const,
   },
   price: {
     all: () => ["price"] as const,
