@@ -12,6 +12,7 @@ import { isOpen } from "@/lib/multisig/pendingTx";
 import { useCurrentAccount } from "@/hooks/useAccount";
 import { usePendingTxs } from "@/hooks/usePendingTxs";
 import { PendingTxCard } from "./PendingTxCard";
+import { PendingTxActions } from "./PendingTxActions";
 import { PendingTxDetailModal } from "./PendingTxDetailModal";
 
 /** Open transactions first, newest first within each group. */
@@ -25,6 +26,7 @@ export function PendingTxsView() {
   const account = useCurrentAccount();
   const pending = usePendingTxs(account);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const selected = pending.data?.find((tx) => tx.id === selectedId) ?? null;
 
   return (
@@ -78,7 +80,12 @@ export function PendingTxsView() {
           ))}
         </ul>
       )}
-      <PendingTxDetailModal tx={selected} onClose={() => setSelectedId(null)} />
+      <PendingTxDetailModal
+        tx={selected}
+        onClose={() => setSelectedId(null)}
+        dismissible={!busy}
+        actions={selected && <PendingTxActions tx={selected} account={account} onBusyChange={setBusy} />}
+      />
     </>
   );
 }
