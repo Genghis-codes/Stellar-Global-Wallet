@@ -41,3 +41,14 @@ describe("ActivityView", () => {
     expect(replace).toHaveBeenCalledWith("/activity?type=payment", { scroll: false });
   });
 });
+
+describe("ActivityView tabs", () => {
+  it("opens the transactions tab from ?tab= and switches back", async () => {
+    search = "tab=transactions";
+    vi.spyOn(api.account, "transactions").mockResolvedValue({ items: [], nextCursor: null, hasMore: false });
+    renderWithProviders(<ActivityView />);
+    expect(await screen.findByText("No transactions yet")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole("tab", { name: "Payments" }));
+    expect(replace).toHaveBeenCalledWith("/activity", { scroll: false });
+  });
+});
