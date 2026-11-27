@@ -60,6 +60,15 @@ export const queryKeys = {
   devices: {
     all: (accountId: string) => ["devices", accountId] as const,
   },
+  contract: {
+    all: () => ["contract"] as const,
+    status: () => ["contract", "status"] as const,
+    admin: () => ["contract", "admin"] as const,
+    upgrade: () => ["contract", "upgrade"] as const,
+    recovery: () => ["contract", "recovery"] as const,
+    assets: (accountId: string) => ["contract", "assets", accountId] as const,
+    allowances: (accountId: string) => ["contract", "allowances", accountId] as const,
+  },
   pendingTxs: {
     all: (accountId: string) => ["pendingTxs", accountId] as const,
     list: (accountId: string) => ["pendingTxs", accountId, "list"] as const,

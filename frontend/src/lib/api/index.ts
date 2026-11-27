@@ -4,6 +4,7 @@ import { accountApi } from "./endpoints/account";
 import { assetsApi } from "./endpoints/assets";
 import { authApi } from "./endpoints/auth";
 import { configApi } from "./endpoints/config";
+import { contractApi } from "./endpoints/contract";
 import { devApi } from "./endpoints/dev";
 import { devicesApi } from "./endpoints/devices";
 import { emailApi } from "./endpoints/email";
@@ -46,6 +47,7 @@ export const api = {
   account: accountApi(apiClient),
   assets: assetsApi(apiClient),
   config: configApi(apiClient),
+  contract: contractApi(apiClient),
   dev: devApi(apiClient),
   devices: devicesApi(apiClient),
   email: emailApi(apiClient),
