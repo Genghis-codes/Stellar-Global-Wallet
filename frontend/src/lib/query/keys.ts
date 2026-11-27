@@ -60,4 +60,9 @@ export const queryKeys = {
   devices: {
     all: (accountId: string) => ["devices", accountId] as const,
   },
+  pendingTxs: {
+    all: (accountId: string) => ["pendingTxs", accountId] as const,
+    list: (accountId: string) => ["pendingTxs", accountId, "list"] as const,
+    detail: (accountId: string, id: string) => ["pendingTxs", accountId, "detail", id] as const,
+  },
 } as const;

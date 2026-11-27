@@ -7,6 +7,7 @@ import { configApi } from "./endpoints/config";
 import { devApi } from "./endpoints/dev";
 import { devicesApi } from "./endpoints/devices";
 import { emailApi } from "./endpoints/email";
+import { pendingTxsApi } from "./endpoints/pendingTxs";
 import { preferencesApi } from "./endpoints/preferences";
 import { priceApi } from "./endpoints/price";
 import { transactionsApi } from "./endpoints/transactions";
@@ -47,6 +48,7 @@ export const api = {
   dev: devApi(apiClient),
   devices: devicesApi(apiClient),
   email: emailApi(apiClient),
+  pendingTxs: pendingTxsApi(apiClient),
   preferences: preferencesApi(apiClient),
   price: priceApi(apiClient),
   transactions: transactionsApi(apiClient),
