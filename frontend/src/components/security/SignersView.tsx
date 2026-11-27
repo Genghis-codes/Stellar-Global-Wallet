@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { RefreshIcon } from "@/components/icons";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -7,12 +8,14 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { describeError } from "@/lib/api/errors";
 import { useAccountSigners, useCurrentAccount } from "@/hooks/useAccount";
+import { AddSignerModal } from "./AddSignerModal";
 import { SignerList } from "./SignerList";
 import { ThresholdsCard } from "./ThresholdsCard";
 
 export function SignersView() {
   const account = useCurrentAccount();
   const signers = useAccountSigners(account);
+  const [adding, setAdding] = useState(false);
 
   return (
     <>
@@ -45,7 +48,16 @@ export function SignersView() {
       ) : (
         <div className="flex flex-col gap-4">
           <ThresholdsCard info={signers.data} />
-          <SignerList info={signers.data} account={account} />
+          <SignerList
+            info={signers.data}
+            account={account}
+            action={
+              <Button size="sm" onClick={() => setAdding(true)}>
+                Add signer
+              </Button>
+            }
+          />
+          <AddSignerModal open={adding} onClose={() => setAdding(false)} info={signers.data} account={account} />
         </div>
       )}
     </>
