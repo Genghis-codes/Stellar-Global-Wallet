@@ -210,6 +210,22 @@ export interface ParsedPaymentRequest {
   warnings: string[];
 }
 
+/** POST /trustline/build — add (or, with limit "0", remove) a classic trustline. */
+export interface TrustlineBuildRequest {
+  account: AccountId;
+  asset: { code: string; issuer: string };
+  /** Decimal limit; omit for the maximum, "0" removes the trustline. */
+  limit?: string;
+}
+
+export interface TrustlineBuild {
+  xdr: string;
+  networkPassphrase: string;
+  /** XLM locked (+0.5) or freed (-0.5) by the change. */
+  reserveDelta: "0.5" | "-0.5" | "0";
+  spendableXlmAfter: string;
+}
+
 const actor = (account: AccountId) => ({ sourcePublicKey: account });
 
 export function walletApi(client: ApiClient) {
@@ -278,6 +294,10 @@ export function walletApi(client: ApiClient) {
         transactionXdr: signedXdr,
         innerAccount: account,
       });
+    },
+
+    buildTrustline(body: TrustlineBuildRequest) {
+      return client.post<TrustlineBuild>("/api/v1/wallet/trustline/build", body);
     },
 
     /** Submit a signed envelope (plain or fee-bump) built by this API. */

@@ -166,3 +166,13 @@ describe("walletApi.sponsorFee", () => {
     await expect(wallet.sponsorFee(G, "SIGNED")).rejects.toMatchObject({ code: "FEE_SPONSOR_NOT_CONFIGURED" });
   });
 });
+
+describe("walletApi.buildTrustline", () => {
+  it("posts the account, asset and optional limit", async () => {
+    const build = { xdr: "AAAA", networkPassphrase: "Test", reserveDelta: "-0.5", spendableXlmAfter: "10.5" };
+    const { fetch, wallet } = setup(jsonResponse(build));
+    await expect(wallet.buildTrustline({ account: G, asset: { code: "USDC", issuer: DEST }, limit: "0" })).resolves.toEqual(build);
+    expect(fetch.mock.calls[0]![0]).toBe("http://api.test/api/v1/wallet/trustline/build");
+    expect(body(fetch)).toEqual({ account: G, asset: { code: "USDC", issuer: DEST }, limit: "0" });
+  });
+});
