@@ -14,7 +14,13 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
 import { useCurrentAccount } from "@/hooks/useAccount";
-import { PENDING_MAX_POLLS, isTransactionNotFound, useTransaction, useTransactionSignatures } from "@/hooks/useTransaction";
+import {
+  PENDING_MAX_POLLS,
+  isTransactionNotFound,
+  useTransaction,
+  useTransactionSignatures,
+  useTransactionStatus,
+} from "@/hooks/useTransaction";
 import { isTransactionHash, type TransactionDetail } from "@/lib/api/endpoints/transactions";
 import { describeError } from "@/lib/api/errors";
 import { truncateAddress } from "@/lib/format";
@@ -115,7 +121,11 @@ export function TransactionDetailView({ hash }: { hash: string }) {
   const valid = isTransactionHash(hash);
   const tx = useTransaction(valid ? hash : null, account);
   const explorer = tx.data?.explorerUrl ?? (valid ? txUrl(hash.toLowerCase()) : null);
-  const waiting = isTransactionNotFound(tx.error) && tx.errorUpdateCount < PENDING_MAX_POLLS;
+  const notFound = isTransactionNotFound(tx.error);
+  // The submission tracker knows about transactions Horizon hasn't ingested (or never will).
+  const tracked = useTransactionStatus(valid ? hash : null, notFound).data;
+  const rejected = tracked && (tracked.status === "failed" || tracked.status === "expired") ? tracked : null;
+  const waiting = notFound && !rejected && tx.errorUpdateCount < PENDING_MAX_POLLS;
 
   const header = (
     <PageHeader
@@ -157,12 +167,23 @@ export function TransactionDetailView({ hash }: { hash: string }) {
         <Skeleton className="h-80 rounded-[var(--radius-card)]" />
       </div>
     );
+  } else if (notFound && rejected) {
+    body = (
+      <EmptyState
+        title={rejected.status === "expired" ? "Transaction expired" : "Transaction failed"}
+        description={rejected.errorMessage ?? "The network did not accept this transaction. No funds were moved."}
+      />
+    );
   } else if (waiting) {
     body = (
       <EmptyState
         icon={<Spinner label={null} />}
         title="Waiting for the network"
-        description="This transaction isn't in a ledger yet. This page updates automatically once it is."
+        description={
+          tracked
+            ? "Submitted. Waiting for the network to confirm it; this page updates automatically."
+            : "This transaction isn't in a ledger yet. This page updates automatically once it is."
+        }
       />
     );
   } else if (tx.isError) {

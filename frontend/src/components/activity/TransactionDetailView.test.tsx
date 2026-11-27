@@ -51,6 +51,7 @@ describe("TransactionDetailView", () => {
   });
 
   it("waits for transactions that have not landed yet", async () => {
+    vi.spyOn(api.transactions, "status").mockRejectedValue(new ApiError("off", { status: 503, code: "SERVICE_UNAVAILABLE" }));
     vi.spyOn(api.transactions, "get").mockRejectedValue(new ApiError("missing", { status: 404, code: "TRANSACTION_NOT_FOUND" }));
     renderWithProviders(<TransactionDetailView hash={HASH} />);
     expect(await screen.findByText("Waiting for the network")).toBeInTheDocument();
@@ -61,5 +62,20 @@ describe("TransactionDetailView", () => {
     renderWithProviders(<TransactionDetailView hash="xyz" />);
     expect(screen.getByText("Invalid transaction hash")).toBeInTheDocument();
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed submission reported by the status tracker", async () => {
+    vi.spyOn(api.transactions, "get").mockRejectedValue(new ApiError("missing", { status: 404, code: "TRANSACTION_NOT_FOUND" }));
+    vi.spyOn(api.transactions, "status").mockResolvedValue({
+      hash: HASH,
+      accountId: G,
+      status: "failed",
+      errorMessage: "tx_bad_seq",
+      createdAt: "",
+      updatedAt: "",
+    });
+    renderWithProviders(<TransactionDetailView hash={HASH} />);
+    expect(await screen.findByText("Transaction failed")).toBeInTheDocument();
+    expect(screen.getByText("tx_bad_seq")).toBeInTheDocument();
   });
 });
