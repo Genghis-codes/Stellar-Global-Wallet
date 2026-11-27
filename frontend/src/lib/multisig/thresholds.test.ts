@@ -32,6 +32,11 @@ describe("simulateSignerChange", () => {
     expect(result.problems[0]).toMatch(/high threshold \(2\).*combined signer weight \(1\)/);
   });
 
+  it("keeps current thresholds for fields left undefined", () => {
+    const result = simulateSignerChange(twoOfThree, { thresholds: { low: undefined, high: 3 } });
+    expect(result.thresholds).toEqual({ low: 1, medium: 2, high: 3 });
+  });
+
   it("blocks zeroing every signer", () => {
     const result = simulateSignerChange(single, { masterWeight: 0 });
     expect(result.problems[0]).toMatch(/No signer would have any weight/);

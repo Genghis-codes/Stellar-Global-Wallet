@@ -70,7 +70,11 @@ export function simulateSignerChange(current: SignerSet, change: SignerChange): 
     if (key !== current.account) weights.delete(key);
   }
 
-  const thresholds: Thresholds = { ...current.thresholds, ...change.thresholds };
+  const thresholds: Thresholds = {
+    low: change.thresholds?.low ?? current.thresholds.low,
+    medium: change.thresholds?.medium ?? current.thresholds.medium,
+    high: change.thresholds?.high ?? current.thresholds.high,
+  };
   const signers = [...weights].filter(([, weight]) => weight > 0).map(([key, weight]) => ({ key, weight }));
   const total = totalWeight(signers);
 
