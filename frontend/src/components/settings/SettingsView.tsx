@@ -3,6 +3,7 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
+import { AboutSettings } from "./AboutSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { DeviceSettings } from "./DeviceSettings";
 import { EmailSettings } from "./EmailSettings";
@@ -17,6 +18,7 @@ function settingsTabs(): TabItem[] {
     { id: "devices", label: "Devices", content: <DeviceSettings /> },
     { id: "appearance", label: "Appearance", content: <AppearanceSettings /> },
     { id: "network", label: "Network", content: <NetworkSettings /> },
+    { id: "about", label: "About", content: <AboutSettings /> },
   ];
 }
 
