@@ -14,7 +14,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { Spinner } from "@/components/ui/Spinner";
 import { useCurrentAccount } from "@/hooks/useAccount";
-import { PENDING_MAX_POLLS, isTransactionNotFound, useTransaction } from "@/hooks/useTransaction";
+import { PENDING_MAX_POLLS, isTransactionNotFound, useTransaction, useTransactionSignatures } from "@/hooks/useTransaction";
 import { isTransactionHash, type TransactionDetail } from "@/lib/api/endpoints/transactions";
 import { describeError } from "@/lib/api/errors";
 import { truncateAddress } from "@/lib/format";
@@ -28,6 +28,33 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
       <dt className="text-sm text-fg-muted">{label}</dt>
       <dd className="min-w-0 break-all text-sm font-medium text-fg sm:text-right">{children}</dd>
     </div>
+  );
+}
+
+function Signatures({ hash }: { hash: string }) {
+  const signatures = useTransactionSignatures(hash);
+  return (
+    <Card>
+      <CardHeader
+        title="Signatures"
+        description={signatures.data ? `${signatures.data.length} ${signatures.data.length === 1 ? "signature" : "signatures"}` : undefined}
+      />
+      <CardBody className="pt-3">
+        {signatures.isPending ? (
+          <Skeleton className="h-6 w-full" />
+        ) : signatures.isError ? (
+          <p className="text-sm text-fg-muted">Signatures are unavailable right now.</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {signatures.data.map((signature) => (
+              <li key={signature} className="break-all rounded-lg bg-surface-muted px-3 py-2 font-mono text-xs text-fg">
+                {signature}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 
@@ -153,6 +180,7 @@ export function TransactionDetailView({ hash }: { hash: string }) {
       <>
         <Summary tx={tx.data} account={account} />
         <OperationList operations={tx.data.operations} />
+        <Signatures hash={tx.data.hash} />
       </>
     );
   }

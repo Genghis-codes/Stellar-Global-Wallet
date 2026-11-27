@@ -45,6 +45,7 @@ export const queryKeys = {
     all: () => ["transactions"] as const,
     detail: (hash: string, account?: string) => ["transactions", "detail", hash.toLowerCase(), account ?? null] as const,
     status: (hash: string) => ["transactions", "status", hash.toLowerCase()] as const,
+    signatures: (hash: string) => ["transactions", "signatures", hash.toLowerCase()] as const,
   },
   assets: {
     all: () => ["assets"] as const,

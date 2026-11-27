@@ -10,6 +10,7 @@ const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 const HASH = "e".repeat(64);
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ account: G }) }));
+vi.mock("@/lib/stellar/horizon", () => ({ fetchTransactionSignatures: vi.fn(async () => ["c2lnbmF0dXJl"]) }));
 
 const detail: TransactionDetail = {
   hash: HASH,
@@ -40,6 +41,7 @@ describe("TransactionDetailView", () => {
     expect(screen.getByText("Ledger").nextSibling).toHaveTextContent("1234");
     expect(screen.getByText("Fee").nextSibling).toHaveTextContent("0.00001XLM");
     expect(screen.getByRole("link", { name: /View on explorer/ })).toHaveAttribute("href", detail.explorerUrl);
+    expect(await screen.findByText("c2lnbmF0dXJl")).toBeInTheDocument();
   });
 
   it("marks failed transactions", async () => {

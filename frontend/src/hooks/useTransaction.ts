@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { isInFlightStatus, isTransactionHash } from "@/lib/api/endpoints/transactions";
 import { isApiError } from "@/lib/api/errors";
 import { queryKeys } from "@/lib/query/keys";
+import { fetchTransactionSignatures } from "@/lib/stellar/horizon";
 
 /** How often to look again for a transaction that hasn't reached Horizon yet. */
 export const PENDING_POLL_MS = 3_000;
@@ -43,5 +44,16 @@ export function useTransactionStatus(hash: string | null | undefined, enabled = 
     enabled: enabled && Boolean(hash && isTransactionHash(hash)),
     retry: false,
     refetchInterval: (query) => (query.state.data && isInFlightStatus(query.state.data.status) ? PENDING_POLL_MS : false),
+  });
+}
+
+/** Envelope signatures (from Horizon; the backend detail route omits them). */
+export function useTransactionSignatures(hash: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.transactions.signatures(hash ?? ""),
+    queryFn: ({ signal }) => fetchTransactionSignatures(hash!, { signal }),
+    enabled: enabled && Boolean(hash && isTransactionHash(hash)),
+    staleTime: Infinity,
+    retry: false,
   });
 }
