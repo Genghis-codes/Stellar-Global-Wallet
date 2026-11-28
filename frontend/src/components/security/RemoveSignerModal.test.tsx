@@ -29,11 +29,21 @@ function info(thresholds: MultisigInfo["thresholds"]): MultisigInfo {
 
 beforeEach(() => vi.restoreAllMocks());
 
+/**
+ * Wait for the signer list with a cheap text query first: polling a
+ * role+name query over the whole page can outlast findBy's 1 s default on
+ * the first test of the file, while the list is in fact rendered.
+ */
+async function signerButton(key: string) {
+  await screen.findByText("Combined signer weight: 4", undefined, { timeout: 5000 });
+  return screen.getByRole("button", { name: `Remove signer ${key}` });
+}
+
 describe("removing a signer", () => {
   it("disables removals that would lock the account out", async () => {
     vi.spyOn(api.account, "signers").mockResolvedValue(info({ low: 1, medium: 4, high: 4 }));
     renderWithProviders(<SignersView />);
-    const remove = await screen.findByRole("button", { name: `Remove signer ${B}` });
+    const remove = await signerButton(B);
     expect(remove).toBeDisabled();
     expect(remove).toHaveAttribute("title", expect.stringMatching(/medium threshold \(4\)/));
     expect(screen.queryByRole("button", { name: `Remove signer ${G}` })).not.toBeInTheDocument();
@@ -51,7 +61,7 @@ describe("removing a signer", () => {
     const submit = vi.spyOn(api.multisig, "submit").mockResolvedValue({ hash: "h", successful: true });
     renderWithProviders(<SignersView />);
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: `Remove signer ${C}` }));
+    await user.click(await signerButton(C));
     expect(screen.getByRole("dialog")).toHaveTextContent("Combined weight would drop to 3");
     await user.click(screen.getByLabelText("I understand the risks"));
     await user.click(screen.getByRole("button", { name: "Remove signer" }));
