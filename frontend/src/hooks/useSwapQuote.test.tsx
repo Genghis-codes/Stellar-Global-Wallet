@@ -43,7 +43,7 @@ describe("useSwapQuote", () => {
     const { result } = renderHook(() => useSwapQuote({ mode: "send", amount: "10", from: "XLM", to: USDC }, 0), {
       wrapper,
     });
-    await waitFor(() => expect(result.current.data?.destination_amount).toBe("1.2"));
+    await waitFor(() => expect(result.current.query.data?.destination_amount).toBe("1.2"));
     expect(spy).toHaveBeenCalledWith(G, { sourceAmount: "10", sourceAsset: "XLM", destinationAsset: USDC }, expect.anything());
   });
 
@@ -52,7 +52,7 @@ describe("useSwapQuote", () => {
     const { result } = renderHook(() => useSwapQuote({ mode: "receive", amount: "1", from: "XLM", to: USDC }, 0), {
       wrapper,
     });
-    await waitFor(() => expect(result.current.data?.source_amount).toBe("8.5"));
+    await waitFor(() => expect(result.current.query.data?.source_amount).toBe("8.5"));
     expect(spy).toHaveBeenCalledWith(G, { destinationAmount: "1", destinationAsset: USDC, sourceAsset: "XLM" }, expect.anything());
   });
 
@@ -61,8 +61,8 @@ describe("useSwapQuote", () => {
     const { result } = renderHook(() => useSwapQuote({ mode: "send", amount: "5", from: "XLM", to: USDC }, 0), {
       wrapper,
     });
-    await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(result.current.data).toBeNull();
+    await waitFor(() => expect(result.current.query.isSuccess).toBe(true));
+    expect(result.current.query.data).toBeNull();
     renderHook(() => useSwapQuote({ mode: "send", amount: "", from: "XLM", to: USDC }, 0), { wrapper });
     expect(send).toHaveBeenCalledTimes(1);
   });

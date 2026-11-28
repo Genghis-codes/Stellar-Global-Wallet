@@ -26,7 +26,8 @@ export function canQuote({ amount, from, to }: SwapQuoteInput): boolean {
  * Best path-payment route for a swap, from POST /wallet/paths/strict-send
  * (exact input) or /paths/strict-receive (exact output). The amount is
  * debounced while typing, and the quote refreshes every 15s since order
- * books move.
+ * books move. `settled` is false while the typed amount is newer than the
+ * one quoted, so callers never show (or sign) a stale quote.
  */
 export function useSwapQuote(input: SwapQuoteInput, debounceMs = 400) {
   const account = useCurrentAccount();
@@ -34,7 +35,7 @@ export function useSwapQuote(input: SwapQuoteInput, debounceMs = 400) {
   const { mode, from, to } = input;
   const settled = { mode, amount, from, to };
 
-  return useQuery({
+  const query = useQuery({
     queryKey: queryKeys.swap.quote(account, mode, from, to, amount),
     queryFn: ({ signal }) =>
       mode === "send"
@@ -49,4 +50,5 @@ export function useSwapQuote(input: SwapQuoteInput, debounceMs = 400) {
     staleTime: 10_000,
     refetchInterval: 15_000,
   });
+  return { query, settled: amount === input.amount.trim() };
 }
