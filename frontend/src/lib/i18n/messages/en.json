@@ -1,0 +1,49 @@
+{
+  "common.skipToContent": "Skip to main content",
+  "common.loading": "Loading…",
+  "common.retry": "Try again",
+  "common.cancel": "Cancel",
+  "common.save": "Save",
+
+  "nav.main": "Main",
+  "nav.dashboard": "Dashboard",
+  "nav.settings": "Settings",
+
+  "shell.openNavigation": "Open navigation",
+  "shell.closeNavigation": "Close navigation",
+  "shell.navigation": "Navigation",
+  "shell.signOut": "Sign out",
+  "shell.themeToLight": "Switch to light theme",
+  "shell.themeToDark": "Switch to dark theme",
+
+  "settings.title": "Settings",
+  "settings.description": "Preferences, security and app information.",
+  "settings.sections": "Settings sections",
+  "settings.tab.preferences": "Preferences",
+  "settings.tab.email": "Email",
+  "settings.tab.devices": "Devices",
+  "settings.tab.appearance": "Appearance",
+  "settings.tab.network": "Network",
+  "settings.tab.about": "About",
+
+  "preferences.display.title": "Display",
+  "preferences.display.description": "Saved to your account and used on every device.",
+  "preferences.currency": "Display currency",
+  "preferences.currency.hint": "Used for portfolio and asset values.",
+  "preferences.currency.fallback": "Prices are only quoted in USD, so values are shown in USD for now.",
+  "preferences.language": "Language",
+  "preferences.saved": "Preferences saved",
+  "preferences.saveFailed": "Couldn't save preferences",
+
+  "notifications.title": "Notifications",
+  "notifications.description": "Choose which alerts GlobeWallet sends you.",
+  "notifications.payments": "Payment alerts",
+  "notifications.payments.description": "Tell me when I send or receive a payment.",
+  "notifications.email": "Email notifications",
+  "notifications.email.description": "Send alerts to my verified email address.",
+  "notifications.push": "Push notifications",
+  "notifications.push.description": "Send alerts to my registered devices.",
+  "notifications.saveFailed": "Couldn't update notifications",
+
+  "devices.count": "{count, plural, =0 {No devices} one {# device} other {# devices}}"
+}
