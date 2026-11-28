@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useId } from "react";
 import { usePathname } from "next/navigation";
 import { GlobeIcon } from "@/components/icons";
-import { NAV_ITEMS, isNavItemActive } from "@/config/nav";
+import { NAV_ITEMS, groupNavItems, isNavItemActive, type NavItem } from "@/config/nav";
 import { useT } from "@/hooks/useT";
 import { cn } from "@/lib/cn";
 
@@ -22,27 +23,44 @@ export function Brand() {
 export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname() ?? "/";
   const t = useT();
+  const idPrefix = useId();
+
+  function renderItem(item: NavItem) {
+    const active = isNavItemActive(item, pathname);
+    const Icon = item.icon;
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        onClick={onNavigate}
+        aria-current={active ? "page" : undefined}
+        className={cn(
+          "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          active ? "bg-primary/10 text-primary" : "text-fg-muted hover:bg-surface-muted hover:text-fg",
+        )}
+      >
+        <Icon className="h-5 w-5 shrink-0" />
+        {item.labelKey ? t(item.labelKey) : item.label}
+      </Link>
+    );
+  }
+
   return (
     <nav aria-label={t("nav.main")} className="flex flex-col gap-1">
-      {NAV_ITEMS.map((item) => {
-        const active = isNavItemActive(item, pathname);
-        const Icon = item.icon;
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            onClick={onNavigate}
-            aria-current={active ? "page" : undefined}
-            className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-              active ? "bg-primary/10 text-primary" : "text-fg-muted hover:bg-surface-muted hover:text-fg",
-            )}
-          >
-            <Icon className="h-5 w-5 shrink-0" />
-            {item.labelKey ? t(item.labelKey) : item.label}
-          </Link>
-        );
-      })}
+      {groupNavItems(NAV_ITEMS).map((group, index) =>
+        group.section ? (
+          <div key={group.section} role="group" aria-labelledby={`${idPrefix}-${index}`} className="mt-3 flex flex-col gap-1">
+            <p id={`${idPrefix}-${index}`} className="px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-fg-muted">
+              {t(group.section)}
+            </p>
+            {group.items.map(renderItem)}
+          </div>
+        ) : (
+          <div key={`group-${index}`} className="flex flex-col gap-1">
+            {group.items.map(renderItem)}
+          </div>
+        ),
+      )}
     </nav>
   );
 }

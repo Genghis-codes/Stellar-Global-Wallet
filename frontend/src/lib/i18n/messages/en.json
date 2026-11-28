@@ -16,6 +16,7 @@
   "nav.pending": "Pending",
   "nav.smartWallet": "Smart wallet",
   "nav.settings": "Settings",
+  "nav.section.security": "Security",
 
   "shell.openNavigation": "Open navigation",
   "shell.closeNavigation": "Close navigation",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { HomeIcon } from "@/components/icons";
 import { createTranslator } from "@/lib/i18n";
-import { NAV_ITEMS, isNavItemActive, type NavItem } from "./nav";
+import { NAV_ITEMS, groupNavItems, isNavItemActive, type NavItem } from "./nav";
 
 const item: NavItem = { href: "/assets", label: "Assets", icon: HomeIcon, match: ["/trustlines"] };
 
@@ -24,5 +24,26 @@ describe("NAV_ITEMS translations", () => {
     for (const entry of NAV_ITEMS) {
       if (entry.labelKey) expect(t(entry.labelKey)).toBe(entry.label);
     }
+  });
+});
+
+describe("groupNavItems", () => {
+  it("groups consecutive items by section", () => {
+    const items: NavItem[] = [
+      { href: "/a", label: "A", icon: HomeIcon },
+      { href: "/s1", label: "S1", icon: HomeIcon, sectionKey: "nav.section.security" },
+      { href: "/s2", label: "S2", icon: HomeIcon, sectionKey: "nav.section.security" },
+      { href: "/b", label: "B", icon: HomeIcon },
+    ];
+    expect(groupNavItems(items).map((g) => [g.section, g.items.map((i) => i.href)])).toEqual([
+      [undefined, ["/a"]],
+      ["nav.section.security", ["/s1", "/s2"]],
+      [undefined, ["/b"]],
+    ]);
+  });
+
+  it("puts Signers, Pending and Smart wallet under Security", () => {
+    const security = groupNavItems(NAV_ITEMS).find((g) => g.section === "nav.section.security");
+    expect(security?.items.map((i) => i.href)).toEqual(["/security/signers", "/security/pending", "/security/smart-wallet"]);
   });
 });
