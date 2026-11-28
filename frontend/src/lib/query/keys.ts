@@ -76,6 +76,11 @@ export const queryKeys = {
     list: (accountId: string) => ["pendingTxs", accountId, "list"] as const,
     detail: (accountId: string, id: string) => ["pendingTxs", accountId, "detail", id] as const,
   },
+  swap: {
+    all: (accountId: string) => ["swap", accountId] as const,
+    quote: (accountId: string, mode: string, from: string, to: string, amount: string) =>
+      ["swap", accountId, "quote", mode, from, to, amount] as const,
+  },
   resolve: {
     address: (address: string) => ["resolve", address] as const,
   },
