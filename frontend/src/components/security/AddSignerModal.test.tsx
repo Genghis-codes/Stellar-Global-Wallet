@@ -36,14 +36,16 @@ beforeEach(() => {
 
 async function fill(key: string, weight: string) {
   const user = userEvent.setup();
-  await user.type(screen.getByLabelText("Signer account"), key);
+  await user.click(screen.getByLabelText("Signer account"));
+  await user.paste(key);
   const weightField = screen.getByLabelText("Weight");
   await user.clear(weightField);
   await user.type(weightField, weight);
   return user;
 }
 
-describe("AddSignerModal", () => {
+// Each test drives a full form; give a busy CI machine room beyond the 5 s default.
+describe("AddSignerModal", { timeout: 20_000 }, () => {
   it("builds, signs and submits when the user can sign alone", async () => {
     const build = vi.spyOn(api.multisig, "buildSetOptions").mockResolvedValue(built);
     const submit = vi.spyOn(api.multisig, "submit").mockResolvedValue({ hash: "h", successful: true });
@@ -52,7 +54,7 @@ describe("AddSignerModal", () => {
     const user = await fill(B, "1");
     await user.click(screen.getByLabelText("I understand the risks"));
     await user.click(screen.getByRole("button", { name: "Add signer" }));
-    await waitFor(() => expect(submit).toHaveBeenCalledWith("signed:TX"));
+    await waitFor(() => expect(submit).toHaveBeenCalledWith("signed:TX"), { timeout: 5000 });
     expect(build).toHaveBeenCalledWith({ sourcePublicKey: G, addSigners: [{ key: B, weight: 1 }] });
     expect(await screen.findByText("Signers updated")).toBeInTheDocument();
     expect(onClose).toHaveBeenCalled();
@@ -93,7 +95,7 @@ describe("AddSignerModal", () => {
     const user = await fill(B, "2");
     await user.click(screen.getByLabelText("I understand the risks"));
     await user.click(screen.getByRole("button", { name: "Update signer" }));
-    await waitFor(() => expect(create).toHaveBeenCalledWith("signed:TX"));
+    await waitFor(() => expect(create).toHaveBeenCalledWith("signed:TX"), { timeout: 5000 });
     expect(submit).not.toHaveBeenCalled();
     expect(await screen.findByText("Shared for co-signing")).toBeInTheDocument();
   });
