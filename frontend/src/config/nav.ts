@@ -1,6 +1,6 @@
 import type { ComponentType, SVGProps } from "react";
 import type { MessageKey } from "@/lib/i18n";
-import { ActivityIcon, CoinsIcon, HomeIcon, KeyIcon, PenIcon, SendIcon, ShieldIcon, SettingsIcon } from "@/components/icons";
+import { ActivityIcon, CoinsIcon, GiftIcon, HomeIcon, KeyIcon, PenIcon, SendIcon, ShieldIcon, SettingsIcon } from "@/components/icons";
 
 export interface NavItem {
   /** App route (inside the (app) route group). */
@@ -23,6 +23,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/send", label: "Send", labelKey: "nav.send", icon: SendIcon },
   { href: "/activity", label: "Activity", labelKey: "nav.activity", icon: ActivityIcon },
   { href: "/assets", label: "Assets", labelKey: "nav.assets", icon: CoinsIcon },
+  { href: "/claimable", label: "Claimable", labelKey: "nav.claimable", icon: GiftIcon },
   { href: "/security/signers", label: "Signers", labelKey: "nav.signers", icon: KeyIcon },
   { href: "/security/pending", label: "Pending", labelKey: "nav.pending", icon: PenIcon },
   { href: "/security/smart-wallet", label: "Smart wallet", labelKey: "nav.smartWallet", icon: ShieldIcon },

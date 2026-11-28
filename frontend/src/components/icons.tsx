@@ -159,3 +159,13 @@ export function SendIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function GiftIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="8" width="18" height="4" rx="1" />
+      <path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8M12 8v13" />
+      <path d="M12 8S10.5 3 8 3a2.5 2.5 0 0 0 0 5h4Zm0 0s1.5-5 4-5a2.5 2.5 0 0 1 0 5h-4Z" />
+    </svg>
+  );
+}
