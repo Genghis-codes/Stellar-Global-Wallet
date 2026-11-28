@@ -15,6 +15,7 @@ import { codeFromCanonical } from "@/lib/activity/operations";
 import type { ClaimableBalance } from "@/lib/api/endpoints/account";
 import { describeError } from "@/lib/api/errors";
 import { formatActivityTime } from "@/components/activity/ActivityRow";
+import { ClaimActions } from "./ClaimActions";
 
 const STATE_BADGE: Record<ClaimableState, ReactNode> = {
   claimable: <Badge tone="success">Claimable now</Badge>,
@@ -29,13 +30,7 @@ function windowText(balance: ClaimableBalance, state: ClaimableState): string | 
   return null;
 }
 
-export interface ClaimableRowProps {
-  balance: ClaimableBalance;
-  account: string;
-  actions?: (balance: ClaimableBalance) => ReactNode;
-}
-
-export function ClaimableRow({ balance, account, actions }: ClaimableRowProps) {
+export function ClaimableRow({ balance, account }: { balance: ClaimableBalance; account: string }) {
   const state = claimableState(balance);
   const code = codeFromCanonical(balance.asset) ?? balance.asset;
   const window = windowText(balance, state);
@@ -59,13 +54,13 @@ export function ClaimableRow({ balance, account, actions }: ClaimableRowProps) {
           {window && <span>· {window}</span>}
         </p>
       </div>
-      {actions?.(balance)}
+      <ClaimActions balance={balance} account={account} />
     </li>
   );
 }
 
 /** /claimable: balances waiting for this account, with their claim windows. */
-export function ClaimableView({ actions }: { actions?: (balance: ClaimableBalance, account: string) => ReactNode }) {
+export function ClaimableView() {
   const account = useCurrentAccount();
   const balances = useClaimableBalances(account);
 
@@ -89,12 +84,7 @@ export function ClaimableView({ actions }: { actions?: (balance: ClaimableBalanc
         <Card>
           <ul aria-label="Claimable balances" className="divide-y divide-border px-5 py-2">
             {balances.data.map((balance) => (
-              <ClaimableRow
-                key={balance.id}
-                balance={balance}
-                account={account}
-                actions={actions ? (b) => actions(b, account) : undefined}
-              />
+              <ClaimableRow key={balance.id} balance={balance} account={account} />
             ))}
           </ul>
         </Card>
