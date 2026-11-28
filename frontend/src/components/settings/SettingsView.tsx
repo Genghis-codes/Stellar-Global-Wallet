@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Tabs, type TabItem } from "@/components/ui/Tabs";
 import { useT } from "@/hooks/useT";
 import type { Translate } from "@/lib/i18n";
+import { AccountSettings } from "@/components/account/AccountSettings";
 import { AboutSettings } from "./AboutSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { DeviceSettings } from "./DeviceSettings";
@@ -21,6 +22,7 @@ function settingsTabs(t: Translate): TabItem[] {
     { id: "appearance", label: t("settings.tab.appearance"), content: <AppearanceSettings /> },
     { id: "network", label: t("settings.tab.network"), content: <NetworkSettings /> },
     { id: "about", label: t("settings.tab.about"), content: <AboutSettings /> },
+    { id: "account", label: t("settings.tab.account"), content: <AccountSettings /> },
   ];
 }
 
