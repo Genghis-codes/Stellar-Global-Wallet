@@ -15,6 +15,7 @@ import { useHiddenAssets, useVerifiedAssetIds } from "@/hooks/useAssets";
 import type { ReservesResponse } from "@/lib/api/endpoints/account";
 import { describeError } from "@/lib/api/errors";
 import { AddAssetModal } from "./AddAssetModal";
+import { RemoveTrustlineButton, canRemoveTrustline } from "./RemoveTrustlineButton";
 import { assetFromBalanceLine, assetId, compareAssets, isNative, type AssetRef } from "@/lib/stellar/asset";
 
 type Line = ReservesResponse["balances"][number];
@@ -24,12 +25,14 @@ export function assetHref(asset: AssetRef): string | null {
 }
 
 function AssetRow({
+  account,
   line,
   asset,
   verified,
   hidden,
   onToggleHidden,
 }: {
+  account: string;
   line: Line;
   asset: AssetRef;
   verified: boolean;
@@ -78,6 +81,7 @@ function AssetRow({
             </p>
           )}
         </div>
+        {asset.issuer && canRemoveTrustline(line) && <RemoveTrustlineButton account={account} code={asset.code} issuer={asset.issuer} />}
         {!isNative(asset) && (
           <Button variant="ghost" size="sm" onClick={onToggleHidden} aria-label={`${hidden ? "Unhide" : "Hide"} ${asset.code}`}>
             {hidden ? "Unhide" : "Hide"}
@@ -154,6 +158,7 @@ export function AssetsView() {
               return (
                 <AssetRow
                   key={id}
+                  account={account}
                   line={line}
                   asset={asset}
                   verified={verified.has(id)}
