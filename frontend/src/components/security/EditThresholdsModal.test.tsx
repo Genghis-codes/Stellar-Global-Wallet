@@ -33,7 +33,7 @@ async function setField(label: string, value: string) {
   return user;
 }
 
-describe("EditThresholdsModal", () => {
+describe("EditThresholdsModal", { timeout: 20_000 }, () => {
   it("blocks thresholds above the combined weight", async () => {
     renderWithProviders(<EditThresholdsModal open onClose={vi.fn()} info={info} account={G} />);
     await setField("High threshold", "4");

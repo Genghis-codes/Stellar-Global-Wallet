@@ -50,7 +50,8 @@ describe("GuardiansView", () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Add guardian" }));
     const dialog = screen.getByRole("dialog");
-    await user.type(within(dialog).getByLabelText("Guardian account"), "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3");
+    await user.click(within(dialog).getByLabelText("Guardian account"));
+    await user.paste("GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3");
     expect(within(dialog).getByRole("status")).toHaveTextContent("queued");
     await user.click(within(dialog).getByRole("button", { name: "Add guardian" }));
     await waitFor(() => expect(build).toHaveBeenCalledWith(ADMIN, "GDQNY3PBOJOKYZSRMK2S7LHHGWZIUISD4QORETLMXEWXBI7KFZZMKTL3"));

@@ -61,7 +61,8 @@ describe("RecoveryActions: guardians", () => {
     const build = vi.spyOn(api.contract, "buildInitiateRecovery").mockResolvedValue(prepared);
     renderFor(G1, idle);
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText("New admin account"), NEW_ADMIN);
+    await user.click(screen.getByLabelText("New admin account"));
+    await user.paste(NEW_ADMIN);
     await user.click(screen.getByRole("button", { name: "Start recovery" }));
     await waitFor(() => expect(build).toHaveBeenCalledWith(G1, NEW_ADMIN));
     expect(await screen.findByText("Recovery started")).toBeInTheDocument();

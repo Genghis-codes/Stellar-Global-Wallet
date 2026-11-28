@@ -50,7 +50,8 @@ describe("AllowancesView", () => {
     const user = userEvent.setup();
     await user.click((await screen.findAllByRole("button", { name: "Allow asset" }))[0]!);
     await user.type(screen.getByLabelText("Asset code"), "USDC");
-    await user.type(screen.getByLabelText("Issuer"), ISSUER);
+    await user.click(screen.getByLabelText("Issuer"));
+    await user.paste(ISSUER);
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Allow asset" }));
     await waitFor(() => expect(build).toHaveBeenCalledWith(G, { code: "USDC", issuer: ISSUER }));
     expect(signTransaction).toHaveBeenCalledWith("TX", expect.any(Object));
