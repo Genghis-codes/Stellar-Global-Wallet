@@ -40,6 +40,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(api.config, "flags").mockResolvedValue(flags);
   vi.spyOn(api.preferences, "get").mockResolvedValue({});
+  vi.spyOn(api.account, "claimableBalances").mockResolvedValue({ items: [], nextCursor: null, hasMore: false });
 });
 
 describe("DashboardView", () => {

@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { describeError } from "@/lib/api/errors";
 import { isUnfundedAccountError, useAccountReserves, useCurrentAccount } from "@/hooks/useAccount";
 import { usePortfolioValue } from "@/hooks/usePrices";
+import { PendingClaimablesCard } from "@/components/claimable/PendingClaimablesCard";
 import { BalanceList } from "./BalanceList";
 import { BalanceSummary } from "./BalanceSummary";
 import { PriceDetailModal } from "@/components/prices/PriceDetailModal";
@@ -59,6 +60,7 @@ export function DashboardView() {
         <div className="flex flex-col gap-4">
           <PortfolioValueCard portfolio={portfolio} />
           <BalanceSummary xlmBalance={xlm} reserves={reserves.data.reserves} />
+          <PendingClaimablesCard account={account} />
           <BalanceList
             balances={reserves.data.balances}
             valuations={
