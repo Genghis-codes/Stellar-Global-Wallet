@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { RefreshIcon } from "@/components/icons";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -8,13 +9,18 @@ import { Card, CardBody } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { describeError } from "@/lib/api/errors";
+import type { SpendAllowance } from "@/lib/api/endpoints/contract";
 import { useCurrentAccount } from "@/hooks/useAccount";
+import { usePendingSpendLimits } from "@/hooks/usePendingSpendLimits";
 import { useSpendAllowances } from "@/hooks/useSmartWallet";
 import { AllowanceMeter } from "./AllowanceMeter";
+import { SetSpendLimitModal } from "./SetSpendLimitModal";
 
 export function SpendLimitsView() {
   const account = useCurrentAccount();
   const allowances = useSpendAllowances(account);
+  const pending = usePendingSpendLimits(account);
+  const [editing, setEditing] = useState<SpendAllowance | null>(null);
 
   return (
     <>
@@ -57,6 +63,9 @@ export function SpendLimitsView() {
                       <h2 className="text-base font-semibold text-fg">{allowance.assetCode}</h2>
                       {allowance.unlimited ? <Badge>Unlimited</Badge> : <Badge tone="info">24 h limit</Badge>}
                     </div>
+                    <Button variant="secondary" size="sm" onClick={() => setEditing(allowance)}>
+                      Change limit
+                    </Button>
                   </div>
                   <AllowanceMeter allowance={allowance} />
                   {allowance.nextRefillAt && (
@@ -70,6 +79,7 @@ export function SpendLimitsView() {
           ))}
         </ul>
       )}
+      <SetSpendLimitModal allowance={editing} account={account} onClose={() => setEditing(null)} onQueued={pending.save} />
     </>
   );
 }
