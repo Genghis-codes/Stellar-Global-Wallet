@@ -55,4 +55,17 @@ describe("AllowancesView", () => {
     await waitFor(() => expect(build).toHaveBeenCalledWith(G, { code: "USDC", issuer: ISSUER }));
     expect(signTransaction).toHaveBeenCalledWith("TX", expect.any(Object));
   });
+
+  it("revokes an asset after confirmation", async () => {
+    vi.spyOn(api.contract, "assets").mockResolvedValue([{ code: "USDC", issuer: ISSUER }]);
+    vi.spyOn(api.contract, "spendAllowances").mockResolvedValue([]);
+    const build = vi.spyOn(api.contract, "buildRemoveAsset").mockResolvedValue({ xdr: "TX" });
+    vi.spyOn(api.contract, "submit").mockResolvedValue({ hash: "h", successful: true });
+    renderWithProviders(<AllowancesView />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Revoke USDC" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Revoke" }));
+    await waitFor(() => expect(build).toHaveBeenCalledWith(G, "USDC"));
+    expect(await screen.findByText("USDC revoked")).toBeInTheDocument();
+  });
 });

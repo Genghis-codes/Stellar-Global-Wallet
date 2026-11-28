@@ -12,12 +12,14 @@ import { useCurrentAccount } from "@/hooks/useAccount";
 import { useContractAssets, useSpendAllowances } from "@/hooks/useSmartWallet";
 import { AllowanceMeter } from "./AllowanceMeter";
 import { GrantAssetModal } from "./GrantAssetModal";
+import { RevokeAssetModal } from "./RevokeAssetModal";
 
 export function AllowancesView() {
   const account = useCurrentAccount();
   const assets = useContractAssets(account);
   const allowances = useSpendAllowances(account);
   const [granting, setGranting] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
 
   return (
     <>
@@ -55,6 +57,15 @@ export function AllowancesView() {
                       ) : (
                         <span className="text-sm text-fg-muted">Native</span>
                       )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-auto"
+                        aria-label={`Revoke ${asset.code}`}
+                        onClick={() => setRevoking(asset.code)}
+                      >
+                        Revoke
+                      </Button>
                     </div>
                     {allowance ? (
                       <AllowanceMeter allowance={allowance} />
@@ -68,6 +79,7 @@ export function AllowancesView() {
           })}
         </ul>
       )}
+      <RevokeAssetModal assetCode={revoking} account={account} onClose={() => setRevoking(null)} />
       <GrantAssetModal open={granting} onClose={() => setGranting(false)} account={account} existing={assets.data ?? []} />
     </>
   );
