@@ -6,3 +6,4 @@ export * from "./memo";
 export * from "./network";
 export * from "./recipient";
 export * from "./sendable";
+export * from "./paths";
