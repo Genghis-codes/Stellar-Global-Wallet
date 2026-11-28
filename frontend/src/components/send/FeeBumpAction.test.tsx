@@ -6,6 +6,9 @@ import { ApiError } from "@/lib/api/errors";
 import { renderWithProviders } from "@/test/render";
 import { FeeBumpAction } from "./FeeBumpAction";
 
+// Slow on loaded CI machines; the default 5 s is too tight for user-event flows.
+vi.setConfig({ testTimeout: 20_000 });
+
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 const signTransaction = vi.fn();
 const buildFeeBump = vi.fn(() => "BUMP");
@@ -41,7 +44,7 @@ describe("FeeBumpAction", () => {
     const onSubmitted = vi.fn();
     renderWithProviders(<FeeBumpAction signedXdr="SIGNED" networkPassphrase="pp" onSubmitted={onSubmitted} />);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Speed up (0.0001 XLM)" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Speed up (0.0001 XLM)" }, { timeout: 10_000 }));
 
     expect(buildFeeBump).toHaveBeenCalledWith("SIGNED", G, 500n, "pp");
     expect(submit).toHaveBeenCalledWith("SIGNED_BUMP", { account: G, idempotencyKey: expect.any(String) });

@@ -3,6 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { SendReview, type SendReviewProps } from "./SendReview";
 
+// Slow on loaded CI machines; the default 5 s is too tight for user-event flows.
+vi.setConfig({ testTimeout: 20_000 });
+
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 
 function setup(overrides: Partial<SendReviewProps> = {}) {

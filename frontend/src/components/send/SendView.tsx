@@ -12,7 +12,7 @@ import { isUnfundedAccountError, useAccountReserves, useCurrentAccount } from "@
 import { useNetworkFees } from "@/hooks/useServerConfig";
 import { newIdempotencyKey, useWalletSubmit, type WalletSubmitOutput } from "@/hooks/useWalletSubmit";
 import { api } from "@/lib/api";
-import { describeError } from "@/lib/api/errors";
+import { describeError, isApiError } from "@/lib/api/errors";
 import type { PaymentBuild, SendPrecheckResult } from "@/lib/api/endpoints/wallet";
 import { isSubmitPending } from "@/lib/api/endpoints/wallet";
 import { formatAmount, truncateAddress } from "@/lib/format";
@@ -20,6 +20,7 @@ import { fromStroops, toStroops } from "@/lib/stellar/amount";
 import { validateMemo } from "@/lib/stellar/memo";
 import { amountError, maxSendable } from "@/lib/stellar/sendable";
 import { assetOptions } from "./AssetPicker";
+import { FeeBumpAction, LOW_FEE_CODES } from "./FeeBumpAction";
 import { SendForm, type SendFormErrors, type SendFormValues } from "./SendForm";
 import { SendReview } from "./SendReview";
 import { TxResult } from "./TxResult";
@@ -37,7 +38,10 @@ interface Review {
   idempotencyKey: string;
 }
 
-type Step = { name: "form" } | { name: "review"; review: Review } | { name: "result"; output?: WalletSubmitOutput; error?: string };
+type Step =
+  | { name: "form" }
+  | { name: "review"; review: Review }
+  | { name: "result"; output?: WalletSubmitOutput; error?: string; lowFee?: boolean };
 
 /** Fallback per-operation fee (stroops) until /network/fees answers. */
 const BASE_FEE = "100";
@@ -59,6 +63,8 @@ export function SendView({ initial }: SendViewProps) {
   });
   const [showErrors, setShowErrors] = useState(false);
   const [step, setStep] = useState<Step>({ name: "form" });
+  // The last signed envelope, so a stuck or under-priced send can be fee-bumped.
+  const [signed, setSigned] = useState<{ xdr: string; networkPassphrase: string } | null>(null);
   const recipient = useRecipient(values.to);
 
   const assets = assetOptions(reserves.data?.balances ?? []);
@@ -124,13 +130,16 @@ export function SendView({ initial }: SendViewProps) {
         networkPassphrase: review.build.networkPassphrase,
         perOperationFee: perOpFee,
         idempotencyKey: review.idempotencyKey,
+        onSigned: (xdr) => setSigned({ xdr, networkPassphrase: review.build!.networkPassphrase }),
       },
       {
         onSuccess: (output) => setStep({ name: "result", output }),
         onError: (error) => {
           const message = describeTxError(error);
           // Declined in the wallet: stay on the review step.
-          if (message) setStep({ name: "result", error: message });
+          if (message) {
+            setStep({ name: "result", error: message, lowFee: isApiError(error) && LOW_FEE_CODES.has(error.code) });
+          }
         },
       },
     );
@@ -140,6 +149,7 @@ export function SendView({ initial }: SendViewProps) {
     setValues((current) => ({ ...current, to: "", amount: "", memo: "" }));
     setShowErrors(false);
     signAndSubmit.reset();
+    setSigned(null);
     setStep({ name: "form" });
   }
 
@@ -171,6 +181,16 @@ export function SendView({ initial }: SendViewProps) {
           />
         )}
       </>
+    );
+  }
+
+  function speedUp(envelope: { xdr: string; networkPassphrase: string }) {
+    return (
+      <FeeBumpAction
+        signedXdr={envelope.xdr}
+        networkPassphrase={envelope.networkPassphrase}
+        onSubmitted={(result) => setStep({ name: "result", output: { result, signedXdr: envelope.xdr, submittedXdr: envelope.xdr } })}
+      />
     );
   }
 
@@ -223,11 +243,18 @@ export function SendView({ initial }: SendViewProps) {
             hash={step.output.result.hash}
             title={isSubmitPending(step.output.result) ? undefined : step.output.result.successful ? "Payment sent" : undefined}
             summary={summary}
+            actions={isSubmitPending(step.output.result) && signed ? speedUp(signed) : undefined}
             onDone={reset}
             doneLabel="Send another"
           />
         ) : (
-          <TxResult status="failed" summary={summary} error={step.error} onRetry={() => setStep({ name: "form" })} />
+          <TxResult
+            status="failed"
+            summary={summary}
+            error={step.error}
+            actions={step.lowFee && signed ? speedUp(signed) : undefined}
+            onRetry={() => setStep({ name: "form" })}
+          />
         ))}
     </div>
   );

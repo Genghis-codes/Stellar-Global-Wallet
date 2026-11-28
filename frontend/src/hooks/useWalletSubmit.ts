@@ -23,6 +23,8 @@ export interface WalletSubmitInput {
   perOperationFee?: string;
   /** Reused on retries so a resubmission replays instead of submitting twice. */
   idempotencyKey: string;
+  /** Receives the signed inner transaction before it is submitted (to fee-bump it if submit fails). */
+  onSigned?: (signedXdr: string) => void;
 }
 
 export interface WalletSubmitOutput {
@@ -50,11 +52,12 @@ export function useWalletSubmit() {
   const queryClient = useQueryClient();
 
   return useMutation<WalletSubmitOutput, Error, WalletSubmitInput>({
-    mutationFn: async ({ xdr, networkPassphrase: passphrase, perOperationFee, idempotencyKey }) => {
+    mutationFn: async ({ xdr, networkPassphrase: passphrase, perOperationFee, idempotencyKey, onSigned }) => {
       if (passphrase !== networkPassphrase()) {
         throw new WalletError("WRONG_NETWORK", "The server built this transaction for a different network than the app uses.");
       }
       const signedXdr = await wallet.signTransaction(xdr, { networkPassphrase: passphrase, address: account });
+      onSigned?.(signedXdr);
       let submittedXdr = signedXdr;
       if (perOperationFee && needsFeeBump(signedXdr, passphrase, perOperationFee)) {
         const bump = buildFeeBump(signedXdr, account, perOperationFee, passphrase);

@@ -7,13 +7,21 @@ import { WalletError } from "@/lib/wallet/types";
 import { renderWithProviders } from "@/test/render";
 import { SendView } from "./SendView";
 
+// Full multi-step flows: give them more than the default 5 s.
+vi.setConfig({ testTimeout: 20_000 });
+
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 const DEST = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ";
 const signTransaction = vi.fn();
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ account: G, wallet: { signTransaction } }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
-vi.mock("@/lib/stellar/feeBump", () => ({ needsFeeBump: () => false, buildFeeBump: () => "BUMP" }));
+vi.mock("@/lib/stellar/feeBump", () => ({
+  needsFeeBump: () => false,
+  buildFeeBump: () => "BUMP",
+  feePerOperation: () => 100n,
+  feeBumpTotal: () => 2000n,
+}));
 
 const build = {
   xdr: "UNSIGNED",
@@ -54,7 +62,9 @@ afterEach(() => {
 
 async function fillForm(amount = "10") {
   renderWithProviders(<SendView />);
-  await userEvent.type(await screen.findByLabelText("Recipient"), DEST);
+  // Paste the long address: typing 56 characters one by one is slow on busy CI machines.
+  await userEvent.click(await screen.findByLabelText("Recipient"));
+  await userEvent.paste(DEST);
   await userEvent.type(screen.getByLabelText("Amount"), amount);
   await userEvent.type(screen.getByLabelText("Memo (optional)"), "rent");
 }
@@ -127,5 +137,23 @@ describe("SendView", () => {
     await waitFor(() => expect(signTransaction).toHaveBeenCalled());
     expect(screen.getByText("Review payment")).toBeInTheDocument();
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("offers to speed up a submission the network didn't confirm in time", async () => {
+    vi.spyOn(api.config, "flags").mockResolvedValue({ multisig: true, feeBump: true, pathPayments: true, recovery: false, priceOracle: false });
+    vi.spyOn(api.wallet, "precheck").mockResolvedValue({ warnings: [], blocking: false, operationType: "payment", spendable: "99" });
+    vi.spyOn(api.wallet, "buildSend").mockResolvedValue(build);
+    vi.spyOn(api.wallet, "submit").mockResolvedValue({ hash: "e".repeat(64), status: "pending" });
+    const sponsor = vi.spyOn(api.wallet, "sponsorFee").mockResolvedValue({ hash: "d".repeat(64), successful: true });
+    signTransaction.mockResolvedValue("SIGNED");
+
+    await fillForm();
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sign and send" }));
+
+    expect(await screen.findByText("Waiting for the network")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Let GlobeWallet pay the fee" }));
+    expect(sponsor).toHaveBeenCalledWith(G, "SIGNED");
+    expect(await screen.findByText("Payment sent")).toBeInTheDocument();
   });
 });

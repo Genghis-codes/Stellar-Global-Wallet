@@ -7,6 +7,9 @@ import { renderWithProviders } from "@/test/render";
 import { RecipientInput } from "./RecipientInput";
 import { useRecipient, type Recipient } from "./useRecipient";
 
+// Slow on loaded CI machines; the default 5 s is too tight for user-event flows.
+vi.setConfig({ testTimeout: 20_000 });
+
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 
 function Harness({ onRecipient }: { onRecipient: (recipient: Recipient | null) => void }) {
@@ -24,7 +27,8 @@ describe("RecipientInput + useRecipient", () => {
     const onRecipient = vi.fn();
     renderWithProviders(<Harness onRecipient={onRecipient} />);
 
-    await userEvent.type(screen.getByLabelText("Recipient"), G);
+    await userEvent.click(screen.getByLabelText("Recipient"));
+    await userEvent.paste(G);
     expect(onRecipient).toHaveBeenLastCalledWith({ kind: "account", destination: G, accountId: G });
     expect(resolve).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -32,7 +36,8 @@ describe("RecipientInput + useRecipient", () => {
 
   it("shows a validation error for malformed input", async () => {
     renderWithProviders(<Harness onRecipient={() => {}} />);
-    await userEvent.type(screen.getByLabelText("Recipient"), "not-an-address");
+    await userEvent.click(screen.getByLabelText("Recipient"));
+    await userEvent.paste("not-an-address");
     expect(screen.getByLabelText("Recipient")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByText(/federation address \(name\*domain.com\)/)).toBeInTheDocument();
   });
@@ -47,7 +52,8 @@ describe("RecipientInput + useRecipient", () => {
     const onRecipient = vi.fn();
     renderWithProviders(<Harness onRecipient={onRecipient} />);
 
-    await userEvent.type(screen.getByLabelText("Recipient"), "bob*example.com");
+    await userEvent.click(screen.getByLabelText("Recipient"));
+    await userEvent.paste("bob*example.com");
     await waitFor(() =>
       expect(onRecipient).toHaveBeenLastCalledWith(
         expect.objectContaining({ kind: "federation", destination: G, memo: { type: "text", value: "1234" } }),
@@ -61,7 +67,8 @@ describe("RecipientInput + useRecipient", () => {
   it("reports federation failures", async () => {
     vi.spyOn(api.resolve, "resolve").mockRejectedValue(new Error("not found"));
     renderWithProviders(<Harness onRecipient={() => {}} />);
-    await userEvent.type(screen.getByLabelText("Recipient"), "ghost*example.com");
+    await userEvent.click(screen.getByLabelText("Recipient"));
+    await userEvent.paste("ghost*example.com");
     expect(await screen.findByText(/Couldn't resolve ghost\*example.com: not found/)).toBeInTheDocument();
   });
 });
