@@ -246,14 +246,14 @@ After adding dependencies, refresh the root lockfile with npm 10
 | `/api/v1/price` | `routes/price.ts` | `endpoints/price.ts` |
 | `/api/v1/me/preferences` | `routes/preferences.ts` | `endpoints/preferences.ts` |
 | `/api/v1/dev` (testnet) | `routes/dev.ts` | `endpoints/dev.ts` |
-| `/api/v1/wallet` (+ client-signing builds and submit) | `routes/wallet.ts`, `routes/clientSigning.ts` | not yet |
+| `/api/v1/wallet` (+ client-signing builds and submit) | `routes/wallet.ts`, `routes/clientSigning.ts` | `endpoints/wallet.ts` (send/path-payment/trustline builds, precheck, paths, payment requests, sponsor fee, submit) and `endpoints/multisig.ts`; swaps (`/swap`) are strict-send/receive path payments to self, helpers in `lib/swap/` on top of `lib/stellar/paths.ts` |
 | `/api/v1/transactions` | `routes/transactions.ts` | `endpoints/transactions.ts` (detail, status, account statuses; signatures come from Horizon, `lib/stellar/horizon.ts`) |
 | `/api/v1/assets` | `routes/assets.ts` | `endpoints/assets.ts` (verified, search, stellar.toml metadata) |
-| `/api/v1/resolve` | `routes/resolve.ts` | not yet |
-| `/api/v1/pending-txs` | `routes/pendingTx.ts` | not yet |
-| `/api/v1/contract` | `routes/contract.ts` | not yet |
-| `/api/v1/me/devices` | `routes/devices.ts` | not yet |
-| `/api/v1/me/email` | `routes/email.ts` | not yet |
+| `/api/v1/resolve` | `routes/resolve.ts` | `endpoints/resolve.ts` |
+| `/api/v1/pending-txs` | `routes/pendingTx.ts` | `endpoints/pendingTxs.ts` |
+| `/api/v1/contract` | `routes/contract.ts` | `endpoints/contract.ts` |
+| `/api/v1/me/devices` | `routes/devices.ts` | `endpoints/devices.ts` |
+| `/api/v1/me/email` | `routes/email.ts` | `endpoints/email.ts` |
 
 Not for the web app: `/api/v1/csp-report` (browser CSP reports),
 `/api/v1/admin/rotate-jwt-keys` (operators), `/.well-known/jwks.json`, `/metrics`.
