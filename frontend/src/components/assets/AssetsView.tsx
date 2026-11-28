@@ -14,6 +14,7 @@ import { isUnfundedAccountError, useAccountReserves, useCurrentAccount } from "@
 import { useHiddenAssets, useVerifiedAssetIds } from "@/hooks/useAssets";
 import type { ReservesResponse } from "@/lib/api/endpoints/account";
 import { describeError } from "@/lib/api/errors";
+import { AddAssetModal } from "./AddAssetModal";
 import { assetFromBalanceLine, assetId, compareAssets, isNative, type AssetRef } from "@/lib/stellar/asset";
 
 type Line = ReservesResponse["balances"][number];
@@ -94,6 +95,7 @@ export function AssetsView() {
   const verified = useVerifiedAssetIds();
   const { isHidden, toggle } = useHiddenAssets();
   const [showHidden, setShowHidden] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   const rows = useMemo(
     () =>
@@ -104,11 +106,23 @@ export function AssetsView() {
     [reserves.data],
   );
   const hiddenCount = rows.filter((row) => isHidden(assetId(row.asset))).length;
+  const held = useMemo(() => new Set(rows.map((row) => assetId(row.asset))), [rows]);
   const visible = showHidden ? rows : rows.filter((row) => !isHidden(assetId(row.asset)));
 
   return (
     <>
-      <PageHeader title="Assets" description="Balances and trustlines on your account." />
+      <PageHeader
+        title="Assets"
+        description="Balances and trustlines on your account."
+        actions={
+          reserves.isSuccess && (
+            <Button size="sm" onClick={() => setAdding(true)}>
+              Add asset
+            </Button>
+          )
+        }
+      />
+      <AddAssetModal open={adding} onClose={() => setAdding(false)} account={account} held={held} />
       {reserves.isPending ? (
         <Skeleton aria-label="Loading assets" className="h-64 rounded-[var(--radius-card)]" />
       ) : reserves.isError ? (
