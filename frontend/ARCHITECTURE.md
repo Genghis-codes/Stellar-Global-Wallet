@@ -241,14 +241,14 @@ After adding dependencies, refresh the root lockfile with npm 10
 | Route group | Backend file | Frontend module |
 |---|---|---|
 | `/api/v1/auth`, `/auth/csrf` | `routes/auth.ts`, `app.ts` | `endpoints/auth.ts`, `client.ensureCsrfToken` |
-| `/api/v1/account` | `routes/account.ts` | `endpoints/account.ts` (reads, muxed, CSV; not yet close / claimable-balance builds) |
+| `/api/v1/account` | `routes/account.ts` | `endpoints/account.ts` (reads, muxed, CSV, claimable balances + claim/reclaim builds, close dry run/build) |
 | `/api/v1/config`, `/api/v1/network`, `/api/v1/flags`, `/health`, `/api/v1/health/details` | `routes/config.ts`, `routes/network.ts`, `routes/flags.ts`, `app.ts` | `endpoints/config.ts` |
 | `/api/v1/price` | `routes/price.ts` | `endpoints/price.ts` |
 | `/api/v1/me/preferences` | `routes/preferences.ts` | `endpoints/preferences.ts` |
 | `/api/v1/dev` (testnet) | `routes/dev.ts` | `endpoints/dev.ts` |
 | `/api/v1/wallet` (+ client-signing builds and submit) | `routes/wallet.ts`, `routes/clientSigning.ts` | not yet |
-| `/api/v1/transactions` | `routes/transactions.ts` | not yet |
-| `/api/v1/assets` | `routes/assets.ts` | not yet |
+| `/api/v1/transactions` | `routes/transactions.ts` | `endpoints/transactions.ts` (detail, status, account statuses; signatures come from Horizon, `lib/stellar/horizon.ts`) |
+| `/api/v1/assets` | `routes/assets.ts` | `endpoints/assets.ts` (verified, search, stellar.toml metadata) |
 | `/api/v1/resolve` | `routes/resolve.ts` | not yet |
 | `/api/v1/pending-txs` | `routes/pendingTx.ts` | not yet |
 | `/api/v1/contract` | `routes/contract.ts` | not yet |
