@@ -11,7 +11,13 @@ import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { useAccountReserves, useCurrentAccount } from "@/hooks/useAccount";
-import { useAssetMetadata, useVerifiedAssetIds } from "@/hooks/useAssets";
+import { useHiddenAssets, useAssetMetadata, useVerifiedAssetIds } from "@/hooks/useAssets";
+import { useToast } from "@/components/ui/Toast";
+import { Button } from "@/components/ui/Button";
+import { useAccountTransaction } from "@/hooks/useAccountTransaction";
+import { phaseLabel, useTxErrorToast } from "@/hooks/useSignAndSubmit";
+import { api } from "@/lib/api";
+import { RemoveTrustlineButton, canRemoveTrustline } from "./RemoveTrustlineButton";
 import type { AssetMetadataStatus } from "@/lib/api/endpoints/assets";
 import { describeError } from "@/lib/api/errors";
 import { parseAssetId } from "@/lib/stellar/asset";
@@ -36,14 +42,45 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function AddTrustlineButton({ account, code, issuer }: { account: string; code: string; issuer: string }) {
+  const toast = useToast();
+  const errorToast = useTxErrorToast();
+  const { execute, phase, busy } = useAccountTransaction(account);
+  async function add() {
+    try {
+      const outcome = await execute(() => api.wallet.buildTrustline({ account, asset: { code, issuer } }));
+      toast.show({ title: outcome.pending ? "Submitted, waiting for the network" : `${code} added`, tone: "success" });
+    } catch (err) {
+      errorToast(err, "Couldn't add the asset");
+    }
+  }
+  return (
+    <Button size="sm" onClick={() => void add()} loading={busy}>
+      {phaseLabel(phase, "Add trustline (0.5 XLM reserve)")}
+    </Button>
+  );
+}
+
 /** /assets/[code]/[issuer]: stellar.toml info, issuer and the account's balance. */
-export function AssetDetailView({ code, issuer, actions }: { code: string; issuer: string; actions?: ReactNode }) {
+export function AssetDetailView({ code, issuer }: { code: string; issuer: string }) {
   const account = useCurrentAccount();
   const asset = parseAssetId(`${code}:${issuer}`);
   const metadata = useAssetMetadata(asset?.code, asset?.issuer);
   const reserves = useAccountReserves(account);
   const verified = useVerifiedAssetIds().has(`${code}:${issuer}`);
   const line = reserves.data?.balances.find((b) => b.asset_code === code && b.asset_issuer === issuer);
+  const { isHidden, toggle } = useHiddenAssets();
+  const hidden = isHidden(`${code}:${issuer}`);
+  const actions = !asset?.issuer ? null : line ? (
+    <div className="flex items-center gap-2">
+      <Button variant="ghost" size="sm" onClick={() => toggle(`${code}:${issuer}`)}>
+        {hidden ? "Unhide from balances" : "Hide from balances"}
+      </Button>
+      {canRemoveTrustline(line) && <RemoveTrustlineButton account={account} code={code} issuer={issuer} />}
+    </div>
+  ) : (
+    <AddTrustlineButton account={account} code={asset.code} issuer={asset.issuer} />
+  );
 
   const header = (
     <PageHeader
