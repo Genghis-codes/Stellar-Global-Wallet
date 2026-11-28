@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
 import { describeError } from "@/lib/api/errors";
 import { isUnfundedAccountError, useAccountReserves, useCurrentAccount } from "@/hooks/useAccount";
 import { usePortfolioValue } from "@/hooks/usePrices";
+import { RecentActivityCard } from "@/components/activity/RecentActivityCard";
 import { PendingClaimablesCard } from "@/components/claimable/PendingClaimablesCard";
 import { useHiddenAssets } from "@/hooks/useAssets";
 import { BalanceList } from "./BalanceList";
@@ -72,6 +73,7 @@ export function DashboardView() {
             currency={portfolio.currency}
             onShowPrice={portfolio.enabled ? (asset, amount) => setPriceFor({ asset, amount }) : undefined}
           />
+          <RecentActivityCard account={account} />
           {priceFor && (
             <PriceDetailModal
               asset={priceFor.asset}
