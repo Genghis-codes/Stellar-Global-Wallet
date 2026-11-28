@@ -27,7 +27,10 @@ function info(thresholds: MultisigInfo["thresholds"]): MultisigInfo {
   };
 }
 
-beforeEach(() => vi.restoreAllMocks());
+beforeEach(() => {
+  vi.restoreAllMocks();
+  vi.spyOn(api.pendingTxs, "list").mockResolvedValue([]);
+});
 
 /**
  * Wait for the signer list with a cheap text query first: polling a

@@ -3,6 +3,7 @@ import { screen } from "@testing-library/react";
 import { api } from "@/lib/api";
 import { ApiError } from "@/lib/api/errors";
 import type { MultisigInfo } from "@/lib/api/endpoints/account";
+import type { PendingTx } from "@/lib/api/endpoints/pendingTxs";
 import { renderWithProviders } from "@/test/render";
 import { SignersView } from "./SignersView";
 
@@ -28,6 +29,7 @@ beforeEach(() => vi.restoreAllMocks());
 describe("SignersView", () => {
   it("lists signers by weight and shows thresholds", async () => {
     vi.spyOn(api.account, "signers").mockResolvedValue(multisigInfo);
+    vi.spyOn(api.pendingTxs, "list").mockResolvedValue([]);
     renderWithProviders(<SignersView />);
     expect(await screen.findByText("Combined signer weight: 3")).toBeInTheDocument();
     const items = screen.getAllByRole("listitem");
@@ -41,5 +43,16 @@ describe("SignersView", () => {
     vi.spyOn(api.account, "signers").mockRejectedValue(new ApiError("Horizon down", { status: 502, code: "HORIZON_UNAVAILABLE" }));
     renderWithProviders(<SignersView />);
     expect(await screen.findByText("Couldn't load signers")).toBeInTheDocument();
+  });
+
+  it("points to transactions waiting for signatures", async () => {
+    vi.spyOn(api.account, "signers").mockResolvedValue(multisigInfo);
+    vi.spyOn(api.pendingTxs, "list").mockResolvedValue([
+      { id: "a", status: "pending" },
+      { id: "b", status: "submitted" },
+    ] as PendingTx[]);
+    renderWithProviders(<SignersView />);
+    expect(await screen.findByText(/1 transaction is waiting for signatures/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Review pending" })).toHaveAttribute("href", "/security/pending");
   });
 });

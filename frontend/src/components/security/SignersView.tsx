@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { RefreshIcon } from "@/components/icons";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -8,6 +9,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { describeError } from "@/lib/api/errors";
 import { useAccountSigners, useCurrentAccount } from "@/hooks/useAccount";
+import { usePendingTxs } from "@/hooks/usePendingTxs";
+import { isOpen } from "@/lib/multisig/pendingTx";
 import { canRemoveSigner } from "@/lib/multisig/thresholds";
 import { AddSignerModal } from "./AddSignerModal";
 import { EditThresholdsModal } from "./EditThresholdsModal";
@@ -18,6 +21,8 @@ import { ThresholdsCard } from "./ThresholdsCard";
 export function SignersView() {
   const account = useCurrentAccount();
   const signers = useAccountSigners(account);
+  const pendingTxs = usePendingTxs(signers.data?.isMultisig ? account : null);
+  const openCount = pendingTxs.data?.filter(isOpen).length ?? 0;
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -52,6 +57,14 @@ export function SignersView() {
         />
       ) : (
         <div className="flex flex-col gap-4">
+          {openCount > 0 && (
+            <p role="status" className="rounded-lg bg-info-soft p-3 text-sm text-info">
+              {openCount} transaction{openCount === 1 ? " is" : "s are"} waiting for signatures.{" "}
+              <Link href="/security/pending" className="font-medium underline">
+                Review pending
+              </Link>
+            </p>
+          )}
           <ThresholdsCard
             info={signers.data}
             action={
