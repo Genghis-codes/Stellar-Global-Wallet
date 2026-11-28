@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { RefreshIcon } from "@/components/icons";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/Button";
@@ -10,6 +11,7 @@ import { isUnfundedAccountError, useAccountReserves, useCurrentAccount } from "@
 import { usePortfolioValue } from "@/hooks/usePrices";
 import { BalanceList } from "./BalanceList";
 import { BalanceSummary } from "./BalanceSummary";
+import { PriceDetailModal } from "@/components/prices/PriceDetailModal";
 import { PortfolioValueCard } from "./PortfolioValueCard";
 import { UnfundedAccount } from "./UnfundedAccount";
 
@@ -17,6 +19,7 @@ export function DashboardView() {
   const account = useCurrentAccount();
   const reserves = useAccountReserves(account);
   const portfolio = usePortfolioValue(account);
+  const [priceFor, setPriceFor] = useState<{ asset: string; amount: string } | null>(null);
   const xlm = reserves.data?.balances.find((line) => line.asset_type === "native")?.balance ?? "0";
 
   return (
@@ -62,7 +65,16 @@ export function DashboardView() {
               portfolio.valuation ? new Map(portfolio.valuation.holdings.map((h) => [h.asset, h])) : undefined
             }
             currency={portfolio.currency}
+            onShowPrice={portfolio.enabled ? (asset, amount) => setPriceFor({ asset, amount }) : undefined}
           />
+          {priceFor && (
+            <PriceDetailModal
+              asset={priceFor.asset}
+              amount={priceFor.amount}
+              currency={portfolio.currency}
+              onClose={() => setPriceFor(null)}
+            />
+          )}
         </div>
       )}
     </>

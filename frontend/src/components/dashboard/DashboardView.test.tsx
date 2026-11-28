@@ -53,6 +53,7 @@ describe("DashboardView", () => {
     expect(items[1]).toHaveTextContent("USDC");
     expect(items[1]).toHaveTextContent("25.50USDC");
     expect(screen.queryByText("No price")).toBeNull();
+    expect(screen.queryByRole("button", { name: "View XLM price" })).toBeNull();
   });
 
   it("shows the total portfolio value when prices are available", async () => {
@@ -69,6 +70,20 @@ describe("DashboardView", () => {
     const items = screen.getAllByRole("listitem");
     expect(items[0]).toHaveTextContent("$10.00");
     expect(items[1]).toHaveTextContent("$25.50");
+
+    vi.spyOn(api.price, "history").mockResolvedValue({
+      asset: "XLM",
+      currency: "USD",
+      range: "7d",
+      resolution: "1h",
+      intervalSeconds: 3600,
+      source: "stellar_dex",
+      from: updatedAt,
+      to: updatedAt,
+      points: [],
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "View XLM price" }));
+    expect(await screen.findByRole("dialog", { name: "XLM price" })).toBeInTheDocument();
   });
 
   it("offers Friendbot funding for an unfunded testnet account", async () => {

@@ -13,10 +13,12 @@ export interface BalanceListProps {
   /** Fiat values by asset id; omit to hide fiat values (no price source). */
   valuations?: Map<string, Valuation>;
   currency?: string;
+  /** Open the price detail for an asset (shown as a "Price" button when set). */
+  onShowPrice?: (assetId: string, amount: string) => void;
 }
 
 /** Every asset the account holds, native first, with total and spendable amounts. */
-export function BalanceList({ balances, valuations, currency = "USD" }: BalanceListProps) {
+export function BalanceList({ balances, valuations, currency = "USD", onShowPrice }: BalanceListProps) {
   const rows = balances
     .map((line) => ({ line, asset: assetFromBalanceLine(line) }))
     .filter((row): row is { line: typeof row.line; asset: NonNullable<typeof row.asset> } => row.asset !== null)
@@ -55,6 +57,16 @@ export function BalanceList({ balances, valuations, currency = "USD" }: BalanceL
                 <AmountDisplay amount={line.balance} asset={asset.code} />
               </p>
               {valuations && <FiatValue valuation={valuations.get(assetId(asset))} currency={currency} />}
+              {onShowPrice && (
+                <button
+                  type="button"
+                  onClick={() => onShowPrice(assetId(asset), line.balance)}
+                  aria-label={`View ${asset.code} price`}
+                  className="mt-0.5 rounded text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Price
+                </button>
+              )}
               {line.spendable !== line.balance && (
                 <p className="text-xs text-fg-muted">
                   <AmountDisplay amount={line.spendable} /> spendable
