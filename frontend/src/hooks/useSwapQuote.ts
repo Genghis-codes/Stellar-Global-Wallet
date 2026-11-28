@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { queryKeys } from "@/lib/query/keys";
 import { isValidAmount, toStroops } from "@/lib/stellar/amount";
-import { bestPath, type SwapMode } from "@/lib/swap/quote";
+import { bestSwapPath, type SwapMode } from "@/lib/swap/quote";
 import { useCurrentAccount } from "./useAccount";
 import { useDebouncedValue } from "./useDebouncedValue";
 
@@ -45,7 +45,7 @@ export function useSwapQuote(input: SwapQuoteInput, debounceMs = 400) {
             { destinationAmount: amount, destinationAsset: to, sourceAsset: from },
             signal,
           ),
-    select: (paths) => bestPath(paths, mode),
+    select: (paths) => bestSwapPath(paths, mode, from, to),
     enabled: canQuote(settled) && amount === input.amount.trim(),
     staleTime: 10_000,
     refetchInterval: 15_000,

@@ -1,17 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaymentPath } from "@/lib/api/endpoints/wallet";
-import {
-  assetCodeOf,
-  bestPath,
-  exchangeRate,
-  formatBps,
-  horizonAssetId,
-  maxSent,
-  minReceived,
-  parseSlippagePercent,
-  pathAssetIds,
-  routeCodes,
-} from "./quote";
+import { assetCodeOf, bestSwapPath, formatBps, maxSent, minReceived, parseSlippagePercent, routeCodes } from "./quote";
 
 const ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
 const AQUA = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA";
@@ -28,28 +17,27 @@ function path(source: string, destination: string, hops: PaymentPath["path"] = [
   };
 }
 
-describe("asset ids", () => {
-  it("maps Horizon fields to backend ids and codes", () => {
-    expect(horizonAssetId("native")).toBe("XLM");
-    expect(horizonAssetId("credit_alphanum4", "USDC", ISSUER)).toBe(`USDC:${ISSUER}`);
+describe("route labels", () => {
+  it("shortens asset ids and lists the full route", () => {
     expect(assetCodeOf(`USDC:${ISSUER}`)).toBe("USDC");
     expect(assetCodeOf("native")).toBe("XLM");
-  });
-
-  it("lists hops and the full route", () => {
     const p = path("10", "1", [{ asset_type: "credit_alphanum4", asset_code: "AQUA", asset_issuer: AQUA }]);
-    expect(pathAssetIds(p)).toEqual([`AQUA:${AQUA}`]);
     expect(routeCodes(p)).toEqual(["XLM", "AQUA", "USDC"]);
   });
 });
 
-describe("bestPath", () => {
+describe("bestSwapPath", () => {
   const paths = [path("10", "1.1"), path("9", "1.3"), path("8", "1.2")];
+  const USDC = `USDC:${ISSUER}`;
 
-  it("picks the largest output for strict-send and the smallest input for strict-receive", () => {
-    expect(bestPath(paths, "send")?.destination_amount).toBe("1.3");
-    expect(bestPath(paths, "receive")?.source_amount).toBe("8");
-    expect(bestPath([], "send")).toBeNull();
+  it("picks the largest output for exact-in and the smallest input for exact-out", () => {
+    expect(bestSwapPath(paths, "send", "XLM", USDC)?.destination_amount).toBe("1.3");
+    expect(bestSwapPath(paths, "receive", "XLM", USDC)?.source_amount).toBe("8");
+    expect(bestSwapPath([], "send", "XLM", USDC)).toBeNull();
+  });
+
+  it("ignores routes for another asset pair", () => {
+    expect(bestSwapPath(paths, "send", "XLM", `USDC:${AQUA}`)).toBeNull();
   });
 });
 
@@ -70,13 +58,5 @@ describe("slippage", () => {
     expect(parseSlippagePercent("5")).toBe(500);
     expect(parseSlippagePercent("5.01")).toBeNull();
     expect(parseSlippagePercent("abc")).toBeNull();
-  });
-});
-
-describe("exchangeRate", () => {
-  it("divides exactly in stroops", () => {
-    expect(exchangeRate("10", "1.3")).toBe("0.13");
-    expect(exchangeRate("3", "1")).toBe("0.3333333");
-    expect(exchangeRate("0", "1")).toBeNull();
   });
 });

@@ -4,7 +4,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { PathPaymentBuild, PaymentPath } from "@/lib/api/endpoints/wallet";
 import { queryKeys } from "@/lib/query/keys";
-import { pathAssetIds, type SwapMode } from "@/lib/swap/quote";
+import { pathAssetIds } from "@/lib/stellar/paths";
+import type { SwapMode } from "@/lib/swap/quote";
 import { useCurrentAccount } from "./useAccount";
 import { newIdempotencyKey, useWalletSubmit, type WalletSubmitOutput } from "./useWalletSubmit";
 

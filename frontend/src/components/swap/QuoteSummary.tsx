@@ -1,6 +1,7 @@
 import { AmountDisplay } from "@/components/ui/AmountDisplay";
 import type { PaymentPath } from "@/lib/api/endpoints/wallet";
-import { exchangeRate, formatBps, maxSent, minReceived, routeCodes, type SwapMode } from "@/lib/swap/quote";
+import { exchangeRate } from "@/lib/stellar/paths";
+import { formatBps, maxSent, minReceived, routeCodes, type SwapMode } from "@/lib/swap/quote";
 
 export interface QuoteSummaryProps {
   quote: PaymentPath;
@@ -12,12 +13,12 @@ export interface QuoteSummaryProps {
 
 /** Rate, route and the slippage-protected bound for a swap quote. */
 export function QuoteSummary({ quote, mode, slippageBps, fromCode, toCode }: QuoteSummaryProps) {
-  const rate = exchangeRate(quote.source_amount, quote.destination_amount);
+  const rate = exchangeRate(quote);
   const route = routeCodes(quote);
   const rows: Array<[string, React.ReactNode]> = [
     [
       "Rate",
-      rate ? (
+      rate !== "0" ? (
         <>
           1 {fromCode} ≈ <AmountDisplay amount={rate} asset={toCode} />
         </>
