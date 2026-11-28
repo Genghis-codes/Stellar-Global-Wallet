@@ -10,6 +10,7 @@ import { describeError } from "@/lib/api/errors";
 import { isUnfundedAccountError, useAccountReserves, useCurrentAccount } from "@/hooks/useAccount";
 import { usePortfolioValue } from "@/hooks/usePrices";
 import { PendingClaimablesCard } from "@/components/claimable/PendingClaimablesCard";
+import { useHiddenAssets } from "@/hooks/useAssets";
 import { BalanceList } from "./BalanceList";
 import { BalanceSummary } from "./BalanceSummary";
 import { PriceDetailModal } from "@/components/prices/PriceDetailModal";
@@ -19,6 +20,7 @@ import { UnfundedAccount } from "./UnfundedAccount";
 export function DashboardView() {
   const account = useCurrentAccount();
   const reserves = useAccountReserves(account);
+  const { hidden } = useHiddenAssets();
   const portfolio = usePortfolioValue(account);
   const [priceFor, setPriceFor] = useState<{ asset: string; amount: string } | null>(null);
   const xlm = reserves.data?.balances.find((line) => line.asset_type === "native")?.balance ?? "0";
@@ -63,6 +65,7 @@ export function DashboardView() {
           <PendingClaimablesCard account={account} />
           <BalanceList
             balances={reserves.data.balances}
+            hidden={hidden}
             valuations={
               portfolio.valuation ? new Map(portfolio.valuation.holdings.map((h) => [h.asset, h])) : undefined
             }

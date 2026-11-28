@@ -107,3 +107,13 @@ describe("DashboardView", () => {
     expect(screen.getByText("Horizon is unavailable")).toBeInTheDocument();
   });
 });
+
+describe("DashboardView hidden assets", () => {
+  it("leaves hidden assets out of the balance list", async () => {
+    vi.spyOn(api.account, "reserves").mockResolvedValue(reserves);
+    vi.spyOn(api.preferences, "get").mockResolvedValue({ hiddenAssets: [`USDC:${ISSUER}`] });
+    renderWithProviders(<DashboardView />);
+    expect(await screen.findByText("1 asset, 1 hidden")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Manage" })).toHaveAttribute("href", "/assets");
+  });
+});

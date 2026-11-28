@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AddressDisplay } from "@/components/ui/AddressDisplay";
 import { AmountDisplay } from "@/components/ui/AmountDisplay";
 import { Badge } from "@/components/ui/Badge";
@@ -15,18 +16,30 @@ export interface BalanceListProps {
   currency?: string;
   /** Open the price detail for an asset (shown as a "Price" button when set). */
   onShowPrice?: (assetId: string, amount: string) => void;
+  /** Asset ids the user hid (preferences.hiddenAssets); XLM is always shown. */
+  hidden?: string[];
 }
 
 /** Every asset the account holds, native first, with total and spendable amounts. */
-export function BalanceList({ balances, valuations, currency = "USD", onShowPrice }: BalanceListProps) {
-  const rows = balances
+export function BalanceList({ balances, valuations, currency = "USD", onShowPrice, hidden = [] }: BalanceListProps) {
+  const all = balances
     .map((line) => ({ line, asset: assetFromBalanceLine(line) }))
     .filter((row): row is { line: typeof row.line; asset: NonNullable<typeof row.asset> } => row.asset !== null)
     .sort((a, b) => compareAssets(a.asset, b.asset));
+  const rows = all.filter((row) => isNative(row.asset) || !hidden.includes(assetId(row.asset)));
+  const hiddenCount = all.length - rows.length;
 
   return (
     <Card>
-      <CardHeader title="Assets" description={`${rows.length} ${rows.length === 1 ? "asset" : "assets"}`} />
+      <CardHeader
+        title="Assets"
+        description={`${rows.length} ${rows.length === 1 ? "asset" : "assets"}${hiddenCount ? `, ${hiddenCount} hidden` : ""}`}
+        action={
+          <Link href="/assets" className="text-sm font-medium text-primary hover:underline">
+            Manage
+          </Link>
+        }
+      />
       <ul className="divide-y divide-border px-5 pb-2 pt-3">
         {rows.map(({ line, asset }) => (
           <li key={assetId(asset)} className="flex items-center justify-between gap-4 py-3">
