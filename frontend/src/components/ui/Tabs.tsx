@@ -88,7 +88,7 @@ export function Tabs({ items, value, onChange, className, "aria-label": ariaLabe
           id={`${baseId}-panel-${selected.id}`}
           aria-labelledby={`${baseId}-tab-${selected.id}`}
           tabIndex={0}
-          className="pt-4 outline-none"
+          className="rounded-lg pt-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {selected.content}
         </div>
