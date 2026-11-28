@@ -8,6 +8,7 @@
   "nav.main": "Main",
   "nav.dashboard": "Dashboard",
   "nav.send": "Send",
+  "nav.receive": "Receive",
   "nav.activity": "Activity",
   "nav.assets": "Assets",
   "nav.claimable": "Claimable",

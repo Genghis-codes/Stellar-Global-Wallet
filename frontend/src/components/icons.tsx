@@ -169,3 +169,12 @@ export function GiftIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function ReceiveIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M17 7 7 17" />
+      <path d="M16 17H7V8" />
+    </svg>
+  );
+}
