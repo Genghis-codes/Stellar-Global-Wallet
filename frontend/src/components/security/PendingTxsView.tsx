@@ -14,6 +14,7 @@ import { usePendingTxs } from "@/hooks/usePendingTxs";
 import { PendingTxCard } from "./PendingTxCard";
 import { PendingTxActions } from "./PendingTxActions";
 import { PendingTxDetailModal } from "./PendingTxDetailModal";
+import { ShareTxModal } from "./ShareTxModal";
 
 /** Open transactions first, newest first within each group. */
 function sortPending(items: PendingTx[]): PendingTx[] {
@@ -27,6 +28,7 @@ export function PendingTxsView() {
   const pending = usePendingTxs(account);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const selected = pending.data?.find((tx) => tx.id === selectedId) ?? null;
 
   return (
@@ -35,15 +37,20 @@ export function PendingTxsView() {
         title="Pending transactions"
         description="Multisig transactions waiting for more signatures."
         actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<RefreshIcon className="h-4 w-4" />}
-            loading={pending.isFetching}
-            onClick={() => void pending.refetch()}
-          >
-            Refresh
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              leftIcon={<RefreshIcon className="h-4 w-4" />}
+              loading={pending.isFetching}
+              onClick={() => void pending.refetch()}
+            >
+              Refresh
+            </Button>
+            <Button size="sm" onClick={() => setSharing(true)}>
+              Share transaction
+            </Button>
+          </>
         }
       />
       {pending.isPending ? (
@@ -80,6 +87,7 @@ export function PendingTxsView() {
           ))}
         </ul>
       )}
+      <ShareTxModal open={sharing} onClose={() => setSharing(false)} account={account} />
       <PendingTxDetailModal
         tx={selected}
         onClose={() => setSelectedId(null)}
