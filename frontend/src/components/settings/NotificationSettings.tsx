@@ -4,22 +4,20 @@ import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Switch } from "@/components/ui/Switch";
 import { useToast } from "@/components/ui/Toast";
 import { usePreferences, useUpdatePreferences } from "@/hooks/usePreferences";
+import { useT } from "@/hooks/useT";
 import type { Preferences } from "@/lib/api/endpoints/preferences";
 import { describeError } from "@/lib/api/errors";
 
 type NotificationKey = keyof NonNullable<Preferences["notifications"]>;
 
-const TOGGLES: { key: NotificationKey; label: string; description: string }[] = [
-  { key: "payments", label: "Payment alerts", description: "Tell me when I send or receive a payment." },
-  { key: "email", label: "Email notifications", description: "Send alerts to my verified email address." },
-  { key: "push", label: "Push notifications", description: "Send alerts to my registered devices." },
-];
+const TOGGLES = ["payments", "email", "push"] as const satisfies readonly NotificationKey[];
 
 /** Notification channel toggles stored in /me/preferences (notifications.*). */
 export function NotificationSettings() {
   const preferences = usePreferences();
   const update = useUpdatePreferences();
   const toast = useToast();
+  const t = useT();
   const current = preferences.data?.notifications ?? {};
 
   function toggle(key: NotificationKey, value: boolean) {
@@ -31,7 +29,7 @@ export function NotificationSettings() {
           toast.show({
             id: "notifications-error",
             tone: "danger",
-            title: "Couldn't update notifications",
+            title: t("notifications.saveFailed"),
             description: describeError(error),
           }),
       }
@@ -40,16 +38,16 @@ export function NotificationSettings() {
 
   return (
     <Card>
-      <CardHeader title="Notifications" description="Choose which alerts GlobeWallet sends you." />
+      <CardHeader title={t("notifications.title")} description={t("notifications.description")} />
       <CardBody className="flex flex-col gap-5">
-        {TOGGLES.map((item) => (
+        {TOGGLES.map((key) => (
           <Switch
-            key={item.key}
-            label={item.label}
-            description={item.description}
-            checked={current[item.key] ?? false}
+            key={key}
+            label={t(`notifications.${key}`)}
+            description={t(`notifications.${key}.description`)}
+            checked={current[key] ?? false}
             disabled={preferences.isPending}
-            onChange={(value) => toggle(item.key, value)}
+            onChange={(value) => toggle(key, value)}
           />
         ))}
       </CardBody>
