@@ -2,18 +2,26 @@
 
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation } from "@tanstack/react-query";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { AmountDisplay } from "@/components/ui/AmountDisplay";
 import { Button } from "@/components/ui/Button";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
+import { useToast } from "@/components/ui/Toast";
 import { useCurrentAccount } from "@/hooks/useAccount";
+import { useAccountTransaction } from "@/hooks/useAccountTransaction";
+import { useAuth } from "@/hooks/useAuth";
+import { phaseLabel, useTxErrorToast } from "@/hooks/useSignAndSubmit";
 import { api } from "@/lib/api";
 import type { CloseAccountDryRun } from "@/lib/api/endpoints/account";
 import { describeError } from "@/lib/api/errors";
 import { isAccountId } from "@/lib/stellar/address";
 import { describeCloseStep } from "./closeSteps";
+
+/** What the user must type to confirm. */
+export const CLOSE_CONFIRMATION = "CLOSE ACCOUNT";
 
 export function destinationError(value: string, account: string): string | null {
   const v = value.trim();
@@ -47,6 +55,55 @@ function Preview({ preview }: { preview: CloseAccountDryRun }) {
             </ul>
           </div>
         )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function ConfirmClose({ account, destination }: { account: string; destination: string }) {
+  const router = useRouter();
+  const toast = useToast();
+  const errorToast = useTxErrorToast();
+  const { signOut } = useAuth();
+  const { execute, phase, busy } = useAccountTransaction(account);
+  const [typed, setTyped] = useState("");
+  const confirmed = typed.trim() === CLOSE_CONFIRMATION;
+
+  async function close() {
+    try {
+      const outcome = await execute(() => api.account.buildClose(account, destination));
+      toast.show({
+        title: outcome.pending ? "Close submitted" : "Account closed",
+        description: outcome.pending
+          ? "The network is still confirming it. Check the destination account shortly."
+          : "Your funds were sent to the destination account.",
+        tone: "success",
+      });
+      // The session's account no longer exists.
+      await signOut();
+      router.push("/");
+    } catch (err) {
+      errorToast(err, "Couldn't close the account");
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader title="Confirm" description={`Type ${CLOSE_CONFIRMATION} to enable closing. Freighter asks you to sign next.`} />
+      <CardBody className="flex flex-col gap-3 sm:flex-row sm:items-end">
+        <div className="flex-1">
+          <Input
+            label="Confirmation"
+            placeholder={CLOSE_CONFIRMATION}
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <Button variant="danger" disabled={!confirmed} loading={busy} onClick={() => void close()}>
+          {phaseLabel(phase, "Close account")}
+        </Button>
       </CardBody>
     </Card>
   );
@@ -107,6 +164,7 @@ export function CloseAccountView() {
         </Card>
 
         {dryRun.data && <Preview preview={dryRun.data} />}
+        {dryRun.data?.canClose && <ConfirmClose account={account} destination={destination.trim()} />}
 
         <Link href="/dashboard" className="text-sm font-medium text-primary hover:underline">
           Keep my account

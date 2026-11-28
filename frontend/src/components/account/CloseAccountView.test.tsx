@@ -68,4 +68,28 @@ describe("CloseAccountView", () => {
     expect(screen.getByText("Enter the account that receives your funds.")).toBeInTheDocument();
     expect(preview).not.toHaveBeenCalled();
   });
+
+  it("requires the typed confirmation, then signs, submits and signs out", async () => {
+    vi.spyOn(api.account, "closeDryRun").mockResolvedValue(dryRun);
+    const build = vi.spyOn(api.account, "buildClose").mockResolvedValue({ xdr: "CLOSE", networkPassphrase: "Test", operations: [], operationCount: 2 });
+    const submit = vi.spyOn(api.wallet, "submit").mockResolvedValue({ hash: "h", successful: true });
+    const user = userEvent.setup();
+    renderWithProviders(<CloseAccountView />);
+    await user.type(screen.getByLabelText("Destination account"), D);
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    const closeButton = await screen.findByRole("button", { name: "Close account" });
+    expect(closeButton).toBeDisabled();
+    await user.type(screen.getByLabelText("Confirmation"), "close account");
+    expect(closeButton).toBeDisabled();
+    await user.clear(screen.getByLabelText("Confirmation"));
+    await user.type(screen.getByLabelText("Confirmation"), "CLOSE ACCOUNT");
+    await user.click(closeButton);
+
+    expect(await screen.findByText("Account closed")).toBeInTheDocument();
+    expect(build).toHaveBeenCalledWith(G, D);
+    expect(submit).toHaveBeenCalledWith("signed:CLOSE", { account: G });
+    expect(signOut).toHaveBeenCalled();
+    expect(push).toHaveBeenCalledWith("/");
+  });
 });
