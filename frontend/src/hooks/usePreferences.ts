@@ -35,7 +35,10 @@ export function useUpdatePreferences() {
       return { previous };
     },
     onError: (_error, _patch, context) => {
-      queryClient.setQueryData(key, context?.previous);
+      // Restore the snapshot; with nothing to restore, refetch the server's copy
+      // (setQueryData(undefined) is a no-op and would keep the rejected change).
+      if (context?.previous !== undefined) queryClient.setQueryData(key, context.previous);
+      else void queryClient.invalidateQueries({ queryKey: key });
     },
     onSuccess: (preferences) => {
       queryClient.setQueryData(key, preferences);

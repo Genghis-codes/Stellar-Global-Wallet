@@ -39,13 +39,33 @@ describe("preferences hooks", () => {
   });
 
   it("rolls back the optimistic change when the server rejects it", async () => {
-    vi.spyOn(api.preferences, "update").mockRejectedValue(new ApiError("bad", { status: 400, code: "VALIDATION_ERROR" }));
+    vi.spyOn(api.preferences, "get").mockResolvedValue({ currency: "USD" });
+    vi.spyOn(api.preferences, "update").mockRejectedValue(
+      new ApiError("bad", { status: 400, code: "VALIDATION_ERROR" })
+    );
     const { queryClient, wrapper } = setup();
-    queryClient.setQueryData(queryKeys.preferences.all(G), { currency: "USD" });
+    // Observe the query as the settings page does, so the cache entry stays alive (gcTime is 0 in tests).
+    const { result } = renderHook(() => ({ prefs: usePreferences(), update: useUpdatePreferences() }), { wrapper });
+    await waitFor(() => expect(result.current.prefs.data).toEqual({ currency: "USD" }));
+
+    await act(async () => {
+      await result.current.update.mutateAsync({ currency: "EUR" }).catch(() => undefined);
+    });
+    expect(queryClient.getQueryData(queryKeys.preferences.all(G))).toEqual({ currency: "USD" });
+    expect(result.current.prefs.data).toEqual({ currency: "USD" });
+  });
+
+  it("refetches instead of keeping the rejected change when there was nothing cached", async () => {
+    vi.spyOn(api.preferences, "get").mockResolvedValue({ currency: "USD" });
+    vi.spyOn(api.preferences, "update").mockRejectedValue(
+      new ApiError("bad", { status: 400, code: "VALIDATION_ERROR" })
+    );
+    const { queryClient, wrapper } = setup();
     const { result } = renderHook(() => useUpdatePreferences(), { wrapper });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     await act(async () => {
       await result.current.mutateAsync({ currency: "EUR" }).catch(() => undefined);
     });
-    expect(queryClient.getQueryData(queryKeys.preferences.all(G))).toEqual({ currency: "USD" });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.preferences.all(G) });
   });
 });
