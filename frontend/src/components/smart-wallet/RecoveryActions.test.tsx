@@ -88,3 +88,26 @@ describe("RecoveryActions: guardians", () => {
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });
+
+describe("RecoveryActions: execute and cancel", () => {
+  it("lets anyone execute once the timelock elapsed", async () => {
+    const build = vi.spyOn(api.contract, "buildExecuteRecovery").mockResolvedValue(prepared);
+    renderFor(NEW_ADMIN, withProposal({ quorumReached: true, readyAtLedger: 900, executable: true }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Execute recovery" }));
+    await waitFor(() => expect(build).toHaveBeenCalledWith(NEW_ADMIN));
+    expect(await screen.findByText("Recovery completed")).toBeInTheDocument();
+  });
+
+  it("lets the admin cancel before quorum", async () => {
+    const build = vi.spyOn(api.contract, "buildCancelRecovery").mockResolvedValue(prepared);
+    renderFor(ADMIN, withProposal());
+    await userEvent.setup().click(screen.getByRole("button", { name: "Cancel recovery" }));
+    await waitFor(() => expect(build).toHaveBeenCalledWith(ADMIN));
+  });
+
+  it("explains why the admin can no longer cancel", () => {
+    renderFor(ADMIN, withProposal({ approvals: [G2, G3], approvalsCount: 2, quorumReached: true, readyAtLedger: 1700 }));
+    expect(screen.getByRole("button", { name: "Cancel recovery" })).toBeDisabled();
+    expect(screen.getByText(/two thirds of the guardians/)).toBeInTheDocument();
+  });
+});

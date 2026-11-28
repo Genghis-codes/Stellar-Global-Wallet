@@ -17,7 +17,7 @@ export interface RecoveryActionsProps {
   permissions: RecoveryPermissions;
 }
 
-type ActionId = "initiate" | "approve" | "revoke";
+type ActionId = "initiate" | "approve" | "revoke" | "execute" | "cancel";
 
 /** Recovery actions the signed-in account may take right now. */
 export function RecoveryActions({ account, state, permissions }: RecoveryActionsProps) {
@@ -102,6 +102,33 @@ export function RecoveryActions({ account, state, permissions }: RecoveryActions
           >
             {label("revoke", "Withdraw approval")}
           </Button>
+        </div>
+      )}
+      {permissions.canExecute && (
+        <div className="flex flex-col gap-2">
+          <p className="text-fg-muted">The timelock has passed. Anyone can now complete the recovery (you pay the fee).</p>
+          <Button
+            loading={running === "execute"}
+            disabled={running !== null}
+            onClick={() => void run("execute", () => api.contract.buildExecuteRecovery(account), "Recovery completed")}
+          >
+            {label("execute", "Execute recovery")}
+          </Button>
+        </div>
+      )}
+
+      {permissions.isAdmin && state.proposal && (
+        <div className="flex flex-col gap-2">
+          <p className="text-fg-muted">If you didn&apos;t lose your key, cancel this recovery.</p>
+          <Button
+            variant="danger"
+            loading={running === "cancel"}
+            disabled={!permissions.canCancel || running !== null}
+            onClick={() => void run("cancel", () => api.contract.buildCancelRecovery(account), "Recovery cancelled")}
+          >
+            {label("cancel", "Cancel recovery")}
+          </Button>
+          {permissions.cancelBlockedReason && <p className="text-xs text-danger">{permissions.cancelBlockedReason}</p>}
         </div>
       )}
     </div>
