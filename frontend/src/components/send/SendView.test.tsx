@@ -97,6 +97,8 @@ describe("SendView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Review" }));
 
     expect(await screen.findByText("Review payment")).toBeInTheDocument();
+    // Focus follows the step for keyboard and screen-reader users.
+    expect(screen.getByRole("group", { name: "Review payment" })).toHaveFocus();
     expect(precheck).toHaveBeenCalledWith({ sourcePublicKey: G, destinationPublicKey: DEST, amount: "10", asset: "XLM", memo: "rent" });
     expect(buildSend).toHaveBeenCalledWith({ sourcePublicKey: G, destinationPublicKey: DEST, amount: "10", asset: "XLM", memo: "rent" });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -43,6 +43,12 @@ type Step =
   | { name: "review"; review: Review }
   | { name: "result"; output?: WalletSubmitOutput; error?: string; lowFee?: boolean };
 
+const STEP_LABELS: Record<Step["name"], string> = {
+  form: "Payment details",
+  review: "Review payment",
+  result: "Payment result",
+};
+
 /** Fallback per-operation fee (stroops) until /network/fees answers. */
 const BASE_FEE = "100";
 
@@ -66,6 +72,18 @@ export function SendView({ initial }: SendViewProps) {
   // The last signed envelope, so a stuck or under-priced send can be fee-bumped.
   const [signed, setSigned] = useState<{ xdr: string; networkPassphrase: string } | null>(null);
   const recipient = useRecipient(values.to);
+
+  // Move focus to the new step so keyboard and screen-reader users land on it
+  // (not on the page top or a button that no longer exists).
+  const stepRef = useRef<HTMLDivElement>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true;
+      return;
+    }
+    stepRef.current?.focus();
+  }, [step.name]);
 
   const assets = assetOptions(reserves.data?.balances ?? []);
   const selected = assets.find((option) => option.id === values.assetId);
@@ -201,61 +219,63 @@ export function SendView({ initial }: SendViewProps) {
   return (
     <div className="mx-auto w-full max-w-xl">
       {header}
-      {step.name === "form" && (
-        <SendForm
-          values={values}
-          onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}
-          recipient={recipient}
-          assets={assets}
-          maxAmount={maxAmount}
-          reserve={reserve}
-          fees={fees.data}
-          errors={errors}
-          showErrors={showErrors}
-          memoRequired={Boolean(federationMemo)}
-          memoLocked={federationMemo?.type === "text"}
-          self={account}
-          submitting={prepare.isPending}
-          onSubmit={onSubmit}
-        />
-      )}
-      {step.name === "review" && recipient.recipient && (
-        <SendReview
-          recipient={recipient.recipient}
-          amount={values.amount.trim()}
-          assetCode={selected?.asset.code ?? "XLM"}
-          memo={memo || undefined}
-          feeXlm={formatAmount(fromStroops(feeTotal(step.review.build, perOpFee)))}
-          feeBump={Boolean(step.review.build && BigInt(perOpFee) > BigInt(step.review.build.fee))}
-          createsAccount={step.review.precheck.operationType === "createAccount"}
-          warnings={step.review.precheck.warnings}
-          blocking={step.review.precheck.blocking || !step.review.build}
-          expiresAt={step.review.build?.expiresAt}
-          signing={signAndSubmit.isPending}
-          onConfirm={() => confirm(step.review)}
-          onBack={() => setStep({ name: "form" })}
-        />
-      )}
-      {step.name === "result" &&
-        (step.output ? (
-          <TxResult
-            status={isSubmitPending(step.output.result) ? "pending" : step.output.result.successful ? "success" : "failed"}
-            hash={step.output.result.hash}
-            title={isSubmitPending(step.output.result) ? undefined : step.output.result.successful ? "Payment sent" : undefined}
-            summary={summary}
-            actions={isSubmitPending(step.output.result) && signed ? speedUp(signed) : undefined}
-            onDone={reset}
-            doneLabel="Send another"
+      <div ref={stepRef} tabIndex={-1} role="group" aria-label={STEP_LABELS[step.name]} className="outline-none">
+        {step.name === "form" && (
+          <SendForm
+            values={values}
+            onChange={(patch) => setValues((current) => ({ ...current, ...patch }))}
+            recipient={recipient}
+            assets={assets}
+            maxAmount={maxAmount}
+            reserve={reserve}
+            fees={fees.data}
+            errors={errors}
+            showErrors={showErrors}
+            memoRequired={Boolean(federationMemo)}
+            memoLocked={federationMemo?.type === "text"}
+            self={account}
+            submitting={prepare.isPending}
+            onSubmit={onSubmit}
           />
-        ) : (
-          <TxResult
-            status="failed"
-            summary={summary}
-            error={step.error}
-            actions={step.lowFee && signed ? speedUp(signed) : undefined}
-            onRetry={() => setStep({ name: "form" })}
+        )}
+        {step.name === "review" && recipient.recipient && (
+          <SendReview
+            recipient={recipient.recipient}
+            amount={values.amount.trim()}
+            assetCode={selected?.asset.code ?? "XLM"}
+            memo={memo || undefined}
+            feeXlm={formatAmount(fromStroops(feeTotal(step.review.build, perOpFee)))}
+            feeBump={Boolean(step.review.build && BigInt(perOpFee) > BigInt(step.review.build.fee))}
+            createsAccount={step.review.precheck.operationType === "createAccount"}
+            warnings={step.review.precheck.warnings}
+            blocking={step.review.precheck.blocking || !step.review.build}
+            expiresAt={step.review.build?.expiresAt}
+            signing={signAndSubmit.isPending}
+            onConfirm={() => confirm(step.review)}
+            onBack={() => setStep({ name: "form" })}
           />
-        ))}
+        )}
+        {step.name === "result" &&
+          (step.output ? (
+            <TxResult
+              status={isSubmitPending(step.output.result) ? "pending" : step.output.result.successful ? "success" : "failed"}
+              hash={step.output.result.hash}
+              title={isSubmitPending(step.output.result) ? undefined : step.output.result.successful ? "Payment sent" : undefined}
+              summary={summary}
+              actions={isSubmitPending(step.output.result) && signed ? speedUp(signed) : undefined}
+              onDone={reset}
+              doneLabel="Send another"
+            />
+          ) : (
+            <TxResult
+              status="failed"
+              summary={summary}
+              error={step.error}
+              actions={step.lowFee && signed ? speedUp(signed) : undefined}
+              onRetry={() => setStep({ name: "form" })}
+            />
+          ))}
+      </div>
     </div>
   );
 }
