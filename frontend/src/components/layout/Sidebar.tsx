@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { GlobeIcon } from "@/components/icons";
 import { NAV_ITEMS, isNavItemActive } from "@/config/nav";
+import { useT } from "@/hooks/useT";
 import { cn } from "@/lib/cn";
 
 export function Brand() {
@@ -20,8 +21,9 @@ export function Brand() {
 /** Navigation list shared by the desktop sidebar and the mobile drawer. */
 export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname() ?? "/";
+  const t = useT();
   return (
-    <nav aria-label="Main" className="flex flex-col gap-1">
+    <nav aria-label={t("nav.main")} className="flex flex-col gap-1">
       {NAV_ITEMS.map((item) => {
         const active = isNavItemActive(item, pathname);
         const Icon = item.icon;
@@ -37,7 +39,7 @@ export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
             )}
           >
             <Icon className="h-5 w-5 shrink-0" />
-            {item.label}
+            {item.labelKey ? t(item.labelKey) : item.label}
           </Link>
         );
       })}

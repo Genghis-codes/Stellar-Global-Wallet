@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { usePathname } from "next/navigation";
 import { CloseIcon, MenuIcon } from "@/components/icons";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
+import { useT } from "@/hooks/useT";
 import { Brand, NavLinks } from "./Sidebar";
 
 export interface TopbarProps {
@@ -13,6 +14,7 @@ export interface TopbarProps {
 
 export function Topbar({ actions }: TopbarProps) {
   const [open, setOpen] = useState(false);
+  const t = useT();
   const pathname = usePathname();
   const [lastPath, setLastPath] = useState(pathname);
 
@@ -35,7 +37,7 @@ export function Topbar({ actions }: TopbarProps) {
         <button
           type="button"
           className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-muted lg:hidden"
-          aria-label="Open navigation"
+          aria-label={t("shell.openNavigation")}
           aria-expanded={open}
           aria-controls="mobile-nav"
           onClick={() => setOpen(true)}
@@ -58,14 +60,14 @@ export function Topbar({ actions }: TopbarProps) {
             id="mobile-nav"
             role="dialog"
             aria-modal="true"
-            aria-label="Navigation"
+            aria-label={t("shell.navigation")}
             className="absolute inset-y-0 left-0 flex w-72 flex-col gap-6 bg-surface px-3 py-5 shadow-xl"
           >
             <div className="flex items-center justify-between">
               <Brand />
               <button
                 type="button"
-                aria-label="Close navigation"
+                aria-label={t("shell.closeNavigation")}
                 onClick={() => setOpen(false)}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-muted"
               >

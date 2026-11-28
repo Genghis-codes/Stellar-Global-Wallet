@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { LogoutIcon } from "@/components/icons";
 import { AddressDisplay } from "@/components/ui/AddressDisplay";
+import { useT } from "@/hooks/useT";
 import { accountUrl } from "@/lib/stellar/explorer";
 import { useAuth } from "./AuthProvider";
 import { NetworkBadge } from "./NetworkBadge";
@@ -11,6 +12,7 @@ import { NetworkBadge } from "./NetworkBadge";
 export function AccountMenu() {
   const { account, signOut } = useAuth();
   const router = useRouter();
+  const t = useT();
 
   async function handleSignOut() {
     await signOut();
@@ -28,8 +30,8 @@ export function AccountMenu() {
       <button
         type="button"
         onClick={handleSignOut}
-        aria-label="Sign out"
-        title="Sign out"
+        aria-label={t("shell.signOut")}
+        title={t("shell.signOut")}
         className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-muted hover:text-fg"
       >
         <LogoutIcon className="h-5 w-5" />

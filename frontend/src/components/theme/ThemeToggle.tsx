@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { useT } from "@/hooks/useT";
 import { cn } from "@/lib/cn";
 import { useTheme } from "./ThemeProvider";
 
@@ -9,10 +10,11 @@ const subscribe = () => () => {};
 /** Button that flips between light and dark (an explicit choice overrides the OS setting). */
 export function ThemeToggle({ className }: { className?: string }) {
   const { resolved, setPreference } = useTheme();
+  const t = useT();
   // The server cannot know the user's theme; render a neutral icon until hydrated.
   const hydrated = useSyncExternalStore(subscribe, () => true, () => false);
   const isDark = hydrated && resolved === "dark";
-  const label = isDark ? "Switch to light theme" : "Switch to dark theme";
+  const label = isDark ? t("shell.themeToLight") : t("shell.themeToDark");
 
   return (
     <button

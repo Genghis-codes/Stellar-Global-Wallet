@@ -7,6 +7,12 @@
 
   "nav.main": "Main",
   "nav.dashboard": "Dashboard",
+  "nav.send": "Send",
+  "nav.activity": "Activity",
+  "nav.assets": "Assets",
+  "nav.signers": "Signers",
+  "nav.pending": "Pending",
+  "nav.smartWallet": "Smart wallet",
   "nav.settings": "Settings",
 
   "shell.openNavigation": "Open navigation",

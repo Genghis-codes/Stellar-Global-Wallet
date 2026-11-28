@@ -1,10 +1,13 @@
 import type { ComponentType, SVGProps } from "react";
+import type { MessageKey } from "@/lib/i18n";
 import { ActivityIcon, CoinsIcon, HomeIcon, KeyIcon, PenIcon, SendIcon, ShieldIcon, SettingsIcon } from "@/components/icons";
 
 export interface NavItem {
   /** App route (inside the (app) route group). */
   href: string;
   label: string;
+  /** Translation key for the label (falls back to `label`). */
+  labelKey?: MessageKey;
   icon: ComponentType<SVGProps<SVGSVGElement>>;
   /** Extra path prefixes that should highlight this item. */
   match?: string[];
@@ -16,14 +19,14 @@ export interface NavItem {
  * append an entry here.
  */
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: HomeIcon },
-  { href: "/send", label: "Send", icon: SendIcon },
-  { href: "/activity", label: "Activity", icon: ActivityIcon },
-  { href: "/assets", label: "Assets", icon: CoinsIcon },
-  { href: "/security/signers", label: "Signers", icon: KeyIcon },
-  { href: "/security/pending", label: "Pending", icon: PenIcon },
-  { href: "/security/smart-wallet", label: "Smart wallet", icon: ShieldIcon },
-  { href: "/settings", label: "Settings", icon: SettingsIcon },
+  { href: "/dashboard", label: "Dashboard", labelKey: "nav.dashboard", icon: HomeIcon },
+  { href: "/send", label: "Send", labelKey: "nav.send", icon: SendIcon },
+  { href: "/activity", label: "Activity", labelKey: "nav.activity", icon: ActivityIcon },
+  { href: "/assets", label: "Assets", labelKey: "nav.assets", icon: CoinsIcon },
+  { href: "/security/signers", label: "Signers", labelKey: "nav.signers", icon: KeyIcon },
+  { href: "/security/pending", label: "Pending", labelKey: "nav.pending", icon: PenIcon },
+  { href: "/security/smart-wallet", label: "Smart wallet", labelKey: "nav.smartWallet", icon: ShieldIcon },
+  { href: "/settings", label: "Settings", labelKey: "nav.settings", icon: SettingsIcon },
 ];
 
 /** Whether a nav item is the current section for `pathname`. */
