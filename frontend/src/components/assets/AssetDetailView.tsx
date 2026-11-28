@@ -92,9 +92,19 @@ export function AssetDetailView({ code, issuer }: { code: string; issuer: string
         </span>
       }
       actions={
-        <Link href="/assets" className="text-sm font-medium text-primary hover:underline">
-          Back to assets
-        </Link>
+        <>
+          {asset && (
+            <Link
+              href={`/activity?asset=${encodeURIComponent(`${code}:${issuer}`)}`}
+              className="text-sm font-medium text-primary hover:underline"
+            >
+              View activity
+            </Link>
+          )}
+          <Link href="/assets" className="text-sm font-medium text-primary hover:underline">
+            Back to assets
+          </Link>
+        </>
       }
     />
   );

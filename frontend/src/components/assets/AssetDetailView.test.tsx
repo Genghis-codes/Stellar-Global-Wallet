@@ -40,6 +40,10 @@ describe("AssetDetailView", () => {
     expect(screen.getByRole("link", { name: "centre.io" })).toHaveAttribute("href", "https://centre.io");
     expect(await screen.findByText("Verified")).toBeInTheDocument();
     expect(await screen.findByText("12.50")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View activity" })).toHaveAttribute(
+      "href",
+      `/activity?asset=${encodeURIComponent(`USDC:${ISSUER}`)}`,
+    );
   });
 
   it("explains missing metadata", async () => {
