@@ -205,6 +205,17 @@ Public pages (no session) go directly under `src/app/`, outside `(app)`.
   don't show an error toast for `USER_REJECTED`.
 - AuthProvider watches the wallet: switching account signs the user out,
   switching network shows a warning.
+- For payment-style flows use `useWalletSubmit()` (`hooks/useWalletSubmit.ts`):
+  it signs, optionally wraps the envelope in a fee bump when the user picked
+  a higher fee, submits with an idempotency key (create one per confirmed
+  submission with `newIdempotencyKey()` and reuse it on retries) and
+  invalidates the account's queries. Never edit a built envelope: the backend
+  relays only transactions whose (inner) hash it built. Raise a fee by
+  wrapping instead (`lib/stellar/feeBump.ts`).
+- Every `/wallet/*` route is behind `requireAccountMatch()`, which needs the
+  acting account in the body or the query. `api.wallet` sends
+  `?sourcePublicKey=` for routes whose body has no actor field (submit,
+  paths, payment requests).
 
 ### Stellar helpers (`lib/stellar`)
 
@@ -215,6 +226,11 @@ Public pages (no session) go directly under `src/app/`, outside `(app)`.
 `addAmounts`, `subtractAmounts`) and asset ids (`assetId`, `parseAssetId`,
 `assetFromBalanceLine`, `compareAssets`). Asset ids match the backend:
 `"XLM"` or `"CODE:ISSUER"`. Use these instead of re-implementing.
+Payment helpers: `classifyRecipient` / `recipientError` (G, M, federation,
+contract), `validateMemo` (text ≤ 28 UTF-8 bytes, uint64 id, 32-byte hash),
+`maxSendable` / `amountError` (reserve- and fee-aware), fee bumps
+(`buildFeeBump`, `needsFeeBump`) and path-payment route helpers (`bestPath`,
+`pathAssetIds`, `exchangeRate`).
 
 ### Testing
 
