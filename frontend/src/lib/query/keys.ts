@@ -84,4 +84,9 @@ export const queryKeys = {
   resolve: {
     address: (address: string) => ["resolve", address] as const,
   },
+  wallet: {
+    paymentRequest: (uri: string) => ["wallet", "payment-request", uri] as const,
+    paths: (accountId: string, mode: string, sendAsset: string, destAsset: string, amount: string) =>
+      ["wallet", "paths", accountId, mode, sendAsset, destAsset, amount] as const,
+  },
 } as const;
