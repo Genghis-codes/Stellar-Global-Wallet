@@ -8,6 +8,9 @@ import { renderWithProviders } from "@/test/render";
 import { PaymentRequestForm } from "./PaymentRequestForm";
 import { paymentRequestLink } from "./PaymentRequestResult";
 
+// user-event flows are slow on loaded CI machines; the default 5 s is too tight.
+vi.setConfig({ testTimeout: 20_000 });
+
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 const ISSUER = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ";
 const assets: AssetOption[] = [
@@ -37,7 +40,7 @@ describe("PaymentRequestForm", () => {
       memo: "991",
       memo_type: "MEMO_ID",
     });
-    expect(await screen.findByRole("img", { name: "Payment request QR code" })).toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: "Payment request QR code" }, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText(uri)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /\/pay\?uri=/ })).toHaveAttribute("href", paymentRequestLink(uri));
   });

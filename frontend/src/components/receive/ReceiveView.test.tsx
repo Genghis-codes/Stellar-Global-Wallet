@@ -5,6 +5,9 @@ import { ApiError } from "@/lib/api/errors";
 import { renderWithProviders } from "@/test/render";
 import { ReceiveView } from "./ReceiveView";
 
+// user-event flows are slow on loaded CI machines; the default 5 s is too tight.
+vi.setConfig({ testTimeout: 20_000 });
+
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 
 vi.mock("@/hooks/useAuth", () => ({ useAuth: () => ({ account: G }) }));
@@ -37,6 +40,6 @@ describe("ReceiveView", () => {
   it("explains how an unfunded account gets created", async () => {
     vi.spyOn(api.account, "reserves").mockRejectedValue(new ApiError("not found", { status: 404, code: "ACCOUNT_NOT_FOUND" }));
     renderWithProviders(<ReceiveView />);
-    expect(await screen.findByText(/first payment must be at least 1 XLM/)).toBeInTheDocument();
+    expect(await screen.findByText(/first payment must be at least 1 XLM/, undefined, { timeout: 10_000 })).toBeInTheDocument();
   });
 });

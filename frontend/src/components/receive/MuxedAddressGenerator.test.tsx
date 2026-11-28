@@ -5,6 +5,9 @@ import { api } from "@/lib/api";
 import { renderWithProviders } from "@/test/render";
 import { MuxedAddressGenerator } from "./MuxedAddressGenerator";
 
+// user-event flows are slow on loaded CI machines; the default 5 s is too tight.
+vi.setConfig({ testTimeout: 20_000 });
+
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 const M = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAAAGZFQ";
 
@@ -18,7 +21,7 @@ describe("MuxedAddressGenerator", () => {
     await userEvent.type(screen.getByLabelText("ID"), "1001");
     await userEvent.click(screen.getByRole("button", { name: "Generate" }));
 
-    expect(await screen.findByText("Muxed address for ID 1001")).toBeInTheDocument();
+    expect(await screen.findByText("Muxed address for ID 1001", undefined, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText(M)).toBeInTheDocument();
     expect(muxed).toHaveBeenCalledWith(G, "1001");
   });

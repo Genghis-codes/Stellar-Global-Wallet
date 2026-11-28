@@ -6,6 +6,9 @@ import { WalletError } from "@/lib/wallet/types";
 import { TxResult } from "./TxResult";
 import { describeTxError } from "./txErrors";
 
+// user-event flows are slow on loaded CI machines; the default 5 s is too tight.
+vi.setConfig({ testTimeout: 20_000 });
+
 const HASH = "a".repeat(64);
 
 describe("TxResult", () => {

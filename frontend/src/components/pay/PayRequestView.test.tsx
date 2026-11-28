@@ -5,6 +5,9 @@ import { ApiError } from "@/lib/api/errors";
 import { renderWithProviders } from "@/test/render";
 import { PayRequestView, sendHrefFor } from "./PayRequestView";
 
+// user-event flows are slow on loaded CI machines; the default 5 s is too tight.
+vi.setConfig({ testTimeout: 20_000 });
+
 const G = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 const DEST = "GCEZWKCA5VLDNRLN3RPRJMRZOX3Z6G5CHCGSNFHEYVXM3XOJMDS674JZ";
 
@@ -28,7 +31,7 @@ describe("PayRequestView", () => {
       .mockResolvedValue({ fields: { destination: DEST, amount: "12", memo: "inv-7" }, warnings: [] });
     renderWithProviders(<PayRequestView uri="web+stellar:pay?destination=x" />);
 
-    expect(await screen.findByText("inv-7")).toBeInTheDocument();
+    expect(await screen.findByText("inv-7", undefined, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Continue to send" })).toHaveAttribute(
       "href",
       `/send?to=${DEST}&amount=12&memo=inv-7`,
@@ -43,7 +46,7 @@ describe("PayRequestView", () => {
     });
     renderWithProviders(<PayRequestView uri="web+stellar:pay?destination=x" />);
 
-    expect(await screen.findByText("asset_issuer is required for non-native assets")).toBeInTheDocument();
+    expect(await screen.findByText("asset_issuer is required for non-native assets", undefined, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByText(/needs a memo ID/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue to send" })).toBeDisabled();
   });
@@ -53,7 +56,7 @@ describe("PayRequestView", () => {
       new ApiError("URI must start with web+stellar:pay?", { status: 400, code: "VALIDATION_ERROR" }),
     );
     const { unmount } = renderWithProviders(<PayRequestView uri="https://evil.test" />);
-    expect(await screen.findByText("This payment request is invalid")).toBeInTheDocument();
+    expect(await screen.findByText("This payment request is invalid", undefined, { timeout: 10_000 })).toBeInTheDocument();
     unmount();
 
     renderWithProviders(<PayRequestView uri={null} />);

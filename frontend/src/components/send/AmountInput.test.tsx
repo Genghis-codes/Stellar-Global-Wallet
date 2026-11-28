@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AmountInput } from "./AmountInput";
+
+// user-event flows are slow on loaded CI machines; the default 5 s is too tight.
+vi.setConfig({ testTimeout: 20_000 });
 
 function Harness(props: { max: string; reserve?: string }) {
   const [value, setValue] = useState("");

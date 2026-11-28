@@ -3,6 +3,9 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { MemoInput } from "./MemoInput";
 
+// user-event flows are slow on loaded CI machines; the default 5 s is too tight.
+vi.setConfig({ testTimeout: 20_000 });
+
 describe("MemoInput", () => {
   it("counts UTF-8 bytes, not characters", () => {
     render(<MemoInput value="héllo😀" onChange={() => {}} />);

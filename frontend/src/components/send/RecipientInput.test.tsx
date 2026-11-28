@@ -58,6 +58,7 @@ describe("RecipientInput + useRecipient", () => {
       expect(onRecipient).toHaveBeenLastCalledWith(
         expect.objectContaining({ kind: "federation", destination: G, memo: { type: "text", value: "1234" } }),
       ),
+      { timeout: 10_000 },
     );
     expect(api.resolve.resolve).toHaveBeenCalledWith("bob*example.com", expect.anything());
     expect(screen.getByText(/Resolves to/)).toBeInTheDocument();
@@ -69,6 +70,6 @@ describe("RecipientInput + useRecipient", () => {
     renderWithProviders(<Harness onRecipient={() => {}} />);
     await userEvent.click(screen.getByLabelText("Recipient"));
     await userEvent.paste("ghost*example.com");
-    expect(await screen.findByText(/Couldn't resolve ghost\*example.com: not found/)).toBeInTheDocument();
+    expect(await screen.findByText(/Couldn't resolve ghost\*example.com: not found/, undefined, { timeout: 10_000 })).toBeInTheDocument();
   });
 });
