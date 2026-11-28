@@ -27,14 +27,14 @@ export function PrecheckWarnings({ warnings, className }: PrecheckWarningsProps)
       {sorted.map((warning) => (
         <li
           key={warning.code}
-          role={warning.blocking ? "alert" : undefined}
           className={cn(
             "flex gap-2.5 rounded-lg p-3 text-sm",
             warning.blocking ? "bg-danger-soft text-danger" : warning.code === "DESTINATION_WILL_BE_CREATED" ? "bg-info-soft text-info" : "bg-warning-soft text-warning",
           )}
         >
           <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
-          <div>
+          {/* The alert role sits inside the <li> so the list keeps its listitem semantics. */}
+          <div role={warning.blocking ? "alert" : undefined}>
             <p className="font-medium">{TITLES[warning.code] ?? warning.code}</p>
             <p className="mt-0.5 text-fg">{warning.message}</p>
           </div>
