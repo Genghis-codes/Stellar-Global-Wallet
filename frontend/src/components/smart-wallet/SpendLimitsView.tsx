@@ -14,6 +14,7 @@ import { useCurrentAccount } from "@/hooks/useAccount";
 import { usePendingSpendLimits } from "@/hooks/usePendingSpendLimits";
 import { useSpendAllowances } from "@/hooks/useSmartWallet";
 import { AllowanceMeter } from "./AllowanceMeter";
+import { PendingIncreases } from "./PendingIncreases";
 import { SetSpendLimitModal } from "./SetSpendLimitModal";
 
 export function SpendLimitsView() {
@@ -53,6 +54,15 @@ export function SpendLimitsView() {
           description="Add an asset under Allowances to set a limit for it."
         />
       ) : (
+        <div className="flex flex-col gap-4">
+        <PendingIncreases
+          account={account}
+          // Drop entries the contract has already applied or discarded.
+          items={pending.items.filter((item) =>
+            allowances.data.some((a) => a.assetCode === item.assetCode && a.limit === item.previousLimit),
+          )}
+          onRemove={pending.remove}
+        />
         <ul className="flex flex-col gap-3" aria-label="Spend limits">
           {allowances.data.map((allowance) => (
             <li key={allowance.assetCode}>
@@ -78,6 +88,7 @@ export function SpendLimitsView() {
             </li>
           ))}
         </ul>
+        </div>
       )}
       <SetSpendLimitModal allowance={editing} account={account} onClose={() => setEditing(null)} onQueued={pending.save} />
     </>
