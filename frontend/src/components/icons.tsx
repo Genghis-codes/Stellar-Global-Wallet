@@ -178,3 +178,11 @@ export function ReceiveIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function SwapIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7" />
+    </svg>
+  );
+}
