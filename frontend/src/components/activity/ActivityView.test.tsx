@@ -21,6 +21,7 @@ beforeEach(() => {
   replace.mockReset();
   search = "";
   vi.spyOn(api.account, "payments").mockResolvedValue({ items: [], nextCursor: null, hasMore: false });
+  vi.spyOn(api.transactions, "accountStatuses").mockResolvedValue([]);
 });
 
 describe("ActivityView", () => {

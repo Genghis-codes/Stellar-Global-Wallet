@@ -8,6 +8,7 @@ import { useCurrentAccount } from "@/hooks/useAccount";
 import { filtersFromSearchParams, filtersToSearchParams, type ActivityFilters } from "@/lib/activity/filters";
 import { ExportCsvButton } from "./ExportCsvButton";
 import { PaymentsFeed } from "./PaymentsFeed";
+import { PendingSubmissions } from "./PendingSubmissions";
 import { TransactionsFeed } from "./TransactionsFeed";
 import { UnifiedFeed } from "./UnifiedFeed";
 
@@ -53,6 +54,7 @@ export function ActivityView() {
         description="Payments and transactions on your account, newest first."
         actions={<ExportCsvButton account={account} />}
       />
+      <PendingSubmissions account={account} />
       <Card>
         <CardBody>
           <Tabs items={items} value={tab} onChange={selectTab} aria-label="Activity views" />
