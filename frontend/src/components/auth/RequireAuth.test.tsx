@@ -34,6 +34,14 @@ describe("RequireAuth", () => {
     render(<RequireAuth>secret</RequireAuth>);
     expect(replace).toHaveBeenCalledWith("/?next=%2Fdashboard");
   });
+
+  it("keeps the query string in the post-login redirect", () => {
+    auth = { status: "signedOut" };
+    window.history.pushState({}, "", "/dashboard?uri=web%2Bstellar%3Apay");
+    render(<RequireAuth>secret</RequireAuth>);
+    expect(replace).toHaveBeenCalledWith(`/?next=${encodeURIComponent("/dashboard?uri=web%2Bstellar%3Apay")}`);
+    window.history.pushState({}, "", "/");
+  });
 });
 
 describe("safeNextPath", () => {
